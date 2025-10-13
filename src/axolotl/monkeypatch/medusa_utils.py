@@ -78,7 +78,37 @@ class ResBlock(nn.Module):
             torch.Tensor: Output after the residual connection and activation.
         """
         return x + self.act(self.linear(x))
-    
+
+class CrossLayerAttention(nn.Module):
+    def __init__(self, hidden_size):
+        super().__init__()
+        self.query = nn.Linear(hidden_size, hidden_size)
+        self.key = nn.Linear(hidden_size, hidden_size)
+        self.value = nn.Linear(hidden_size, hidden_size)
+        self.scale = hidden_size ** -0.5
+        
+    def forward(self, layer_outputs):
+        if not isinstance(layer_outputs, (list, tuple)):
+            layer_outputs = [layer_outputs]
+        elif isinstance(layer_outputs, torch.Tensor):
+            layer_outputs = [layer_outputs]
+        
+        # 设备同步
+        device = self.query.weight.device
+        layer_outputs = [x.to(device) if isinstance(x, torch.Tensor) else x for x in layer_outputs]
+        
+        # 堆叠计算
+        stacked_outputs = torch.stack(layer_outputs)
+        queries = self.query(stacked_outputs[-1]).unsqueeze(2)
+        keys = self.key(stacked_outputs).permute(1, 2, 0, 3)
+        values = self.value(stacked_outputs).permute(1, 2, 0, 3)
+        
+        attn_weights = torch.matmul(queries, keys.transpose(-1,-2)) * self.scale
+        attn_weights = torch.softmax(attn_weights, dim=-1)
+        
+        aggregated = torch.matmul(attn_weights, values).squeeze(2)
+        return aggregated.to(device)  # [batch, seq_len, hidden_size]
+
 def add_medusa_heads(
     self,
     medusa_num_heads=4,
@@ -100,11 +130,17 @@ def add_medusa_heads(
         [
             nn.Sequential(
                 *([ResBlock(hidden_size)] * medusa_num_layers),
-                nn.Linear(hidden_size, vocab_size, bias=False),
+                # nn.Linear(hidden_size, vocab_size, bias=False),
             )
             for _ in range(medusa_num_heads)
         ]
     )
+    self.cross_attn = nn.ModuleList(
+    [CrossLayerAttention(hidden_size) for _ in range(medusa_num_heads)]
+    )
+    device = next(self.lm_head.parameters()).device
+    dtype = next(self.lm_head.parameters()).dtype
+    self.cross_attn.to(device).to(dtype)
 
     # Ensure medusa_head's dtype and device align with the base_model
     self.medusa_head.to(self.dtype).to(self.device)
@@ -159,11 +195,17 @@ def add_medusa_heads(
                     inputs_embeds=inputs_embeds,
                     use_cache=use_cache,
                     output_attentions=output_attentions,
-                    output_hidden_states=output_hidden_states,
+                    # output_hidden_states=output_hidden_states,
+                    output_hidden_states=True,
                     return_dict=return_dict,
                 )
                 hidden_states = outputs[0]
                 medusa_logits = [self.lm_head(hidden_states)]
+
+                all_layer_outputs = outputs.hidden_states
+                print("Number of layers:", len(all_layer_outputs))  # 打印层数
+                for i, layer_output in enumerate(all_layer_outputs):
+                    print(f"Layer {i} output shape:", layer_output.shape) 
         else:
             outputs = self.model(
                 input_ids=input_ids,
