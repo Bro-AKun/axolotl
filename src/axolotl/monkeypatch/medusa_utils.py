@@ -199,6 +199,7 @@ def add_medusa_heads(
                 )
                 hidden_states_new = outputs[0]
                 print("line201:",hidden_states_new.shape)
+                medusa_logits_ = []
                 medusa_logits_ = [self.lm_head(hidden_states)]
                 print("line203:",medusa_logits_.shape)
                 
@@ -245,7 +246,7 @@ def add_medusa_heads(
             medusa_logits.append(head_output.unsqueeze(0))
                         
             last_one = current_input
-            # print("medusa_logits[i]", medusa_logits[1].shape)
+            print("medusa_logits[1]", medusa_logits[1].shape)
 
         return torch.stack(medusa_logits, dim=0)
     
