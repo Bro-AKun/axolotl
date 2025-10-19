@@ -147,8 +147,7 @@ def add_medusa_heads(
 
     for i in range(medusa_num_heads):
         # Initialize the weights of each medusa_head using the base model's weights
-        #self.medusa_head[i][-1].weight.data[:] = self.lm_head.weight.data[:]
-
+        # self.medusa_head[i][-1].weight.data[:] = self.lm_head.weight.data[:]
     self.old_forward = self.forward
 
     def forward(
