@@ -6,7 +6,7 @@ import logging
 import warnings
 from functools import partial
 from typing import List, Optional, Tuple, Union
-
+import sys
 import torch
 import torch.nn.functional as F
 from torch import nn
@@ -206,7 +206,11 @@ def add_medusa_heads(
                 hidden_states = hidden_states.to(device=lm_device, dtype=lm_dtype)
 
                 medusa_logits = [self.lm_head(hidden_states).unsqueeze(0)]
-                # print("medusa_logits[0]", medusa_logits[0].shape)
+                print("medusa_logits[0]", medusa_logits[0].shape)
+
+                print("Number of layers:", len(all_layer_outputs))  # 打印层数
+                for i, layer_output in enumerate(all_layer_outputs):
+                     print(f"Layer {i} output shape:", layer_output.shape)
         else:
             outputs = self.model(
                 input_ids=input_ids,
