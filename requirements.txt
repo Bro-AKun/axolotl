@@ -1,8 +1,14 @@
-torch
+# torch
+--extra-index-url https://download.pytorch.org/whl/cu124
+torch==2.6.0
+torchvision==0.21.0
+torchaudio==2.6.0
 auto-gptq
 packaging
-peft @ git+https://github.com/huggingface/peft.git
-transformers @ git+https://github.com/huggingface/transformers.git@acc394c4f5e1283c19783581790b3dc3105a3697
+#peft @ git+https://github.com/huggingface/peft.git
+peft @ git+https://github.com/huggingface/peft.git@v0.6.2
+#transformers @ git+https://github.com/huggingface/transformers.git@acc394c4f5e1283c19783581790b3dc3105a3697
+transformers @ git+https://github.com/huggingface/transformers.git@v4.34.1
 bitsandbytes>=0.41.1
 accelerate @ git+https://github.com/huggingface/accelerate@80da9cfb09bb3cc9f1b385cb55d6b90d025a5fd9
 deepspeed
