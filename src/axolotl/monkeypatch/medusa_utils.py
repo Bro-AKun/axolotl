@@ -47,6 +47,36 @@ class MedusaConfig(PretrainedConfig):
         self.medusa_num_layers = medusa_num_layers
         self.base_model_name_or_path = base_model_name_or_path
 
+class CrossLayerAttention(nn.Module):
+    def __init__(self, hidden_size):
+        super().__init__()
+        self.query = nn.Linear(hidden_size, hidden_size)
+        self.key = nn.Linear(hidden_size, hidden_size)
+        self.value = nn.Linear(hidden_size, hidden_size)
+        self.scale = hidden_size ** -0.5
+        
+    def forward(self, layer_outputs):
+        if not isinstance(layer_outputs, (list, tuple)):
+            layer_outputs = [layer_outputs]
+        elif isinstance(layer_outputs, torch.Tensor):
+            layer_outputs = [layer_outputs]
+        
+        # 设备同步
+        device = self.query.weight.device
+        layer_outputs = [x.to(device) if isinstance(x, torch.Tensor) else x for x in layer_outputs]
+        
+        # 堆叠计算
+        stacked_outputs = torch.stack(layer_outputs)
+        queries = self.query(stacked_outputs[-1]).unsqueeze(2)
+        keys = self.key(stacked_outputs).permute(1, 2, 0, 3)
+        values = self.value(stacked_outputs).permute(1, 2, 0, 3)
+        
+        attn_weights = torch.matmul(queries, keys.transpose(-1,-2)) * self.scale
+        attn_weights = torch.softmax(attn_weights, dim=-1)
+        
+        aggregated = torch.matmul(attn_weights, values).squeeze(2)
+        return aggregated.to(device)  # [batch, seq_len, hidden_size]
+
 
 class ResBlock(nn.Module):
     """
@@ -78,37 +108,7 @@ class ResBlock(nn.Module):
             torch.Tensor: Output after the residual connection and activation.
         """
         return x + self.act(self.linear(x))
-
-class CrossLayerAttention(nn.Module):
-    def __init__(self, hidden_size):
-        super().__init__()
-        self.query = nn.Linear(hidden_size, hidden_size)
-        self.key = nn.Linear(hidden_size, hidden_size)
-        self.value = nn.Linear(hidden_size, hidden_size)
-        self.scale = hidden_size ** -0.5
-        
-    def forward(self, layer_outputs):
-        if not isinstance(layer_outputs, (list, tuple)):
-            layer_outputs = [layer_outputs]
-        elif isinstance(layer_outputs, torch.Tensor):
-            layer_outputs = [layer_outputs]
-        
-        # 设备同步
-        device = self.query.weight.device
-        layer_outputs = [x.to(device) if isinstance(x, torch.Tensor) else x for x in layer_outputs]
-        
-        # 堆叠计算
-        stacked_outputs = torch.stack(layer_outputs)
-        queries = self.query(stacked_outputs[-1]).unsqueeze(2)
-        keys = self.key(stacked_outputs).permute(1, 2, 0, 3)
-        values = self.value(stacked_outputs).permute(1, 2, 0, 3)
-        
-        attn_weights = torch.matmul(queries, keys.transpose(-1,-2)) * self.scale
-        attn_weights = torch.softmax(attn_weights, dim=-1)
-        
-        aggregated = torch.matmul(attn_weights, values).squeeze(2)
-        return aggregated.to(device)  # [batch, seq_len, hidden_size]
-
+    
 def add_medusa_heads(
     self,
     medusa_num_heads=4,
@@ -125,22 +125,20 @@ def add_medusa_heads(
     self.config.medusa_num_layers = medusa_num_layers
     self.config.medusa_num_heads = medusa_num_heads
     self.medusa_num_heads = medusa_num_heads
+    self.cross_attn = CrossLayerAttention(hidden_size)
+    device = next(self.lm_head.parameters()).device
+    dtype = next(self.lm_head.parameters()).dtype
+    self.cross_attn.to(device).to(dtype)
     # Create a list of Medusa heads
     self.medusa_head = nn.ModuleList(
         [
             nn.Sequential(
                 *([ResBlock(hidden_size)] * medusa_num_layers),
-                # nn.Linear(hidden_size, vocab_size, bias=False),
+                nn.Linear(hidden_size, vocab_size, bias=False),
             )
             for _ in range(medusa_num_heads)
         ]
     )
-    self.cross_attn = nn.ModuleList(
-    [CrossLayerAttention(hidden_size) for _ in range(medusa_num_heads)]
-    )
-    device = next(self.lm_head.parameters()).device
-    dtype = next(self.lm_head.parameters()).dtype
-    self.cross_attn.to(device).to(dtype)
 
     # Ensure medusa_head's dtype and device align with the base_model
     self.medusa_head.to(self.dtype).to(self.device)
@@ -199,13 +197,16 @@ def add_medusa_heads(
                     output_hidden_states=True,
                     return_dict=return_dict,
                 )
-                hidden_states = outputs[0]
-                medusa_logits = [self.lm_head(hidden_states)]
-
                 all_layer_outputs = outputs.hidden_states
-                print("Number of layers:", len(all_layer_outputs))  # 打印层数
-                for i, layer_output in enumerate(all_layer_outputs):
-                    print(f"Layer {i} output shape:", layer_output.shape) 
+                atten = self.cross_attn(all_layer_outputs)
+                hidden_states = atten[-1]
+
+                lm_device = next(self.lm_head.parameters()).device
+                lm_dtype = next(self.lm_head.parameters()).dtype
+                hidden_states = hidden_states.to(device=lm_device, dtype=lm_dtype)
+
+                medusa_logits = [self.lm_head(hidden_states).unsqueeze(0)]
+                # print("medusa_logits[0]", medusa_logits[0].shape)
         else:
             outputs = self.model(
                 input_ids=input_ids,
@@ -220,8 +221,23 @@ def add_medusa_heads(
             )
             hidden_states = outputs[0]
             medusa_logits = [self.lm_head(hidden_states)]
+
+        body_layers = list(self.medusa_head[0].children())[:-1]
+        body_seq = nn.Sequential(*body_layers)
+        last_one = body_seq(hidden_states)
         for i in range(self.medusa_num_heads):
-            medusa_logits.append(self.medusa_head[i](hidden_states))
+            # medusa_logits.append(self.medusa_head[i](hidden_states))
+            res_blocks = list(self.medusa_head[i].children())[:-1]
+            res_seq = nn.Sequential(*res_blocks)
+            Line_layer = list(self.medusa_head[i].children())[-1]
+            current_input = (res_seq(hidden_states) + last_one)/2
+
+            head_output = Line_layer(current_input)
+            medusa_logits.append(head_output.unsqueeze(0))
+                        
+            last_one = current_input
+            # print("medusa_logits[i]", medusa_logits[1].shape)
+
         return torch.stack(medusa_logits, dim=0)
     
     self.forward = types.MethodType(forward, self)
