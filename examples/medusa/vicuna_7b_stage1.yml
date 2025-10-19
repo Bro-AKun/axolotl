@@ -9,7 +9,7 @@ load_in_4bit: false
 strict: false
 
 datasets:
-  - path: ShareGPT_Vicuna_unfiltered/ShareGPT_V4.3_unfiltered_cleaned_split.json
+  - path: /workspace/data/liuzijun/research/zh_workspace/CVPR_2026/zyk/axolotl/ShareGPT_V4.3_unfiltered_cleaned_split.json
     type: sharegpt
 dataset_prepared_path:
 val_set_size: 0.01
