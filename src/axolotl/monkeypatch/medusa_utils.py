@@ -247,7 +247,7 @@ def add_medusa_heads(
                         
             last_one = current_input
             print("medusa_logits[1]", medusa_logits[1].shape)
-
+            print("medusa_logits:",torch.stack(medusa_logits, dim=0).shape)
         return torch.stack(medusa_logits, dim=0)
     
     self.forward = types.MethodType(forward, self)
