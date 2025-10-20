@@ -201,7 +201,7 @@ def add_medusa_heads(
                 print("line201:",hidden_states_new.shape)
                 medusa_logits_ = []
                 medusa_logits_ = [self.lm_head(hidden_states_new)]
-                print("line203:",medusa_logits_.shape)
+                print("line203:",medusa_logits_[0].shape)
                 
                 all_layer_outputs = outputs.hidden_states
                 atten = self.cross_attn(all_layer_outputs)
