@@ -79,35 +79,72 @@ class ResBlock(nn.Module):
         """
         return x + self.act(self.linear(x))
 
-class CrossLayerAttention(nn.Module):
-    def __init__(self, hidden_size):
+class CrossAttention(nn.Module):
+    def __init__(self, embed_dim, num_heads, vocab_dim ,lm_head_layer,dropout=0.1):
         super().__init__()
-        self.query = nn.Linear(hidden_size, hidden_size)
-        self.key = nn.Linear(hidden_size, hidden_size)
-        self.value = nn.Linear(hidden_size, hidden_size)
-        self.scale = hidden_size ** -0.5
+        self.embed_dim = embed_dim
+        self.num_heads = num_heads
+        self.head_dim = embed_dim // num_heads
+
+        # 线性投影层
+        self.query = nn.Linear(embed_dim, embed_dim)
+        self.key = nn.Linear(embed_dim, embed_dim)
+        self.value = nn.Linear(embed_dim, embed_dim)
         
-    def forward(self, layer_outputs):
-        if not isinstance(layer_outputs, (list, tuple)):
-            layer_outputs = [layer_outputs]
-        elif isinstance(layer_outputs, torch.Tensor):
-            layer_outputs = [layer_outputs]
+        # 输出层
+        self.proj = nn.Linear(embed_dim, vocab_dim)
         
-        # 设备同步
-        device = self.query.weight.device
-        layer_outputs = [x.to(device) if isinstance(x, torch.Tensor) else x for x in layer_outputs]
+        # 复制 lm_head 的权重和偏置（如果存在）
+        self.proj.weight.data.copy_(lm_head_layer.weight.data)
+        if hasattr(lm_head_layer, 'bias') and lm_head_layer.bias is not None:
+            self.proj.bias.data.copy_(lm_head_layer.bias.data)
+
+
+        self.dropout = nn.Dropout(dropout)
         
-        # 堆叠计算
-        stacked_outputs = torch.stack(layer_outputs)
-        queries = self.query(stacked_outputs[-1]).unsqueeze(2)
-        keys = self.key(stacked_outputs).permute(1, 2, 0, 3)
-        values = self.value(stacked_outputs).permute(1, 2, 0, 3)
+        # 缩放因子
+        self.scale = self.head_dim ** -0.5
+
+    def forward(self, x, context, mask=None):
+        """
+        Args:
+            x:       Query 序列       [batch_size, seq_len_q, embed_dim]
+            context: Key/Value 序列   [batch_size, seq_len_kv, embed_dim]
+            mask:    可选的掩码        [batch_size, seq_len_q, seq_len_kv]
+        Returns:
+            out:     注意力输出        [batch_size, seq_len_q, embed_dim]
+        """
+        batch_size = x.size(0)
         
-        attn_weights = torch.matmul(queries, keys.transpose(-1,-2)) * self.scale
-        attn_weights = torch.softmax(attn_weights, dim=-1)
+        # 1. 线性投影并分头
+        q = self.query(x).view(batch_size, -1, self.num_heads, self.head_dim).transpose(1, 2)  # [B, H, L_q, D/H]
+        k = self.key(context).view(batch_size, -1, self.num_heads, self.head_dim).transpose(1, 2)  # [B, H, L_kv, D/H]
+        v = self.value(context).view(batch_size, -1, self.num_heads, self.head_dim).transpose(1, 2)  # [B, H, L_kv, D/H]
         
-        aggregated = torch.matmul(attn_weights, values).squeeze(2)
-        return aggregated.to(device)  # [batch, seq_len, hidden_size]
+        # 2. 计算注意力分数
+        attn_scores = torch.matmul(q, k.transpose(-2, -1)) * self.scale  # [B, H, L_q, L_kv]
+        
+        # 3. 应用掩码（可选）
+        if mask is not None:
+            attn_scores = attn_scores.masked_fill(mask == 0, float('-inf'))
+        
+        # 4. 注意力权重和输出
+        attn_weights = F.softmax(attn_scores, dim=-1)
+        attn_weights = self.dropout(attn_weights)
+        out = torch.matmul(attn_weights, v)  # [B, H, L_q, D/H]
+        
+        # 5. 合并多头并投影
+        out = out.transpose(1, 2).contiguous().view(batch_size, -1, self.embed_dim)
+        out = self.proj(out)
+        
+        return out
+
+def POS_embedding(current_vec: torch.Tensor, 
+                 past_vec: torch.Tensor, 
+                 numda: float) -> torch.Tensor:
+    result = current_vec + numda * past_vec
+    result = result / torch.tensor(1 + numda)
+    return result
 
 def add_medusa_heads(
     self,
@@ -136,20 +173,30 @@ def add_medusa_heads(
         ]
     )
     self.cross_attn = nn.ModuleList(
-    [CrossLayerAttention(hidden_size) for _ in range(medusa_num_heads)]
+    [CrossAttention(hidden_size,4,vocab_size,self.lm_head) for _ in range(medusa_num_heads)]
     )
+    self.proj_layers = nn.ModuleList([
+            nn.Linear(vocab_size,hidden_size, bias=False)
+            for _ in range(medusa_num_heads)
+        ])
+    for i in range(medusa_num_heads):
+        with torch.no_grad():
+            self.proj_layers[i].weight.data = self.lm_head.weight.T
+            if self.proj_layers[i].bias is not None:
+                nn.init.zeros_(self.proj_layers[i].bias)
+
     device = next(self.lm_head.parameters()).device
     dtype = next(self.lm_head.parameters()).dtype
     self.cross_attn.to(device).to(dtype)
+    self.proj_layers.to(device).to(dtype)
 
     # Ensure medusa_head's dtype and device align with the base_model
     self.medusa_head.to(self.dtype).to(self.device)
-
-    for i in range(medusa_num_heads):
-        # Initialize the weights of each medusa_head using the base model's weights
-        self.medusa_head[i][-1].weight.data[:] = self.lm_head.weight.data[:]
-
     self.old_forward = self.forward
+
+    # for i in range(medusa_num_heads):
+    #     # Initialize the weights of each medusa_head using the base model's weights
+    #     self.medusa_head[i][-1].weight.data[:] = self.lm_head.weight.data[:]
 
     def forward(
         self,
@@ -200,14 +247,26 @@ def add_medusa_heads(
                     return_dict=return_dict,
                 )
                 hidden_states = outputs[0]
-                medusa_logits = [self.lm_head(hidden_states)]
+                out_0 = self.lm_head(hidden_states)
+                medusa_logits = [out_0]
 
                 all_layer_outputs = outputs.hidden_states
-                print("Number of layers:", len(all_layer_outputs))  # 打印层数
-                for i, layer_output in enumerate(all_layer_outputs):
-                    print(f"Layer {i} output shape:", layer_output.shape)
-                print("满足条件，程序即将退出...")
-                sys.exit()
+                # print("Number of layers:", len(all_layer_outputs))  # 打印层数
+                # for i, layer_output in enumerate(all_layer_outputs):
+                #     print(f"Layer {i} output shape:", layer_output.shape)
+                x = 30  
+                # 1. 提取后x层的输出
+                last_x_layers = all_layer_outputs[-x:]  # 列表，包含x个 [1, 4096, 4096] 张量
+
+                # 2. 对每层取最后一个token的隐藏状态 [:, -1, :]
+                last_token_hidden_states = [layer[:, -1, :] for layer in last_x_layers]  # x个 [1, 4096] 张量
+
+                # 3. 堆叠为 [1, x, 4096]
+                merged_output = torch.stack(last_token_hidden_states, dim=1)  # [1, x, 4096]
+
+                # 验证形状
+                print("合并后的形状:", merged_output.shape)  # 应输出 torch.Size([1, x, 4096])
+                
         else:
             outputs = self.model(
                 input_ids=input_ids,
@@ -222,8 +281,19 @@ def add_medusa_heads(
             )
             hidden_states = outputs[0]
             medusa_logits = [self.lm_head(hidden_states)]
+        # for i in range(self.medusa_num_heads):
+        #     medusa_logits.append(self.medusa_head[i](hidden_states))
+
+        embedded = POS_embedding(out_0,out_0,0.8)
         for i in range(self.medusa_num_heads):
-            medusa_logits.append(self.medusa_head[i](hidden_states))
+            query = self.proj_layers[i](embedded)
+            SiLued = self.medusa_head[i](merged_output)
+            predicted = self.cross_attn[i](query, SiLued)
+            print("predicted shape:", predicted.shape)
+            medusa_logits.append(predicted)
+            print("extend_predicted shape:",predicted.shape)
+            embedded = POS_embedding(predicted,embedded,0.8)
+        print("medusa_logits shape:", torch.stack(medusa_logits, dim=0).shape)
         return torch.stack(medusa_logits, dim=0)
     
     self.forward = types.MethodType(forward, self)
