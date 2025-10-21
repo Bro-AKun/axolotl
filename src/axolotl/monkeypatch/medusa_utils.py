@@ -193,9 +193,6 @@ def add_medusa_heads(
     # Ensure medusa_head's dtype and device align with the base_model
     self.medusa_head.to(self.dtype).to(self.device)
     self.old_forward = self.forward
-    # for i in range(medusa_num_heads):
-        # Initialize the weights of each medusa_head using the base model's weights
-        # self.medusa_head[i][-1].weight.data[:] = self.lm_head.weight.data[:]
 
     # for i in range(medusa_num_heads):
     #     # Initialize the weights of each medusa_head using the base model's weights
@@ -268,7 +265,7 @@ def add_medusa_heads(
                 merged_output = torch.stack(last_token_hidden_states, dim=1)  # [1, x, 4096]
 
                 # 验证形状
-                print("合并后的形状:", merged_output.shape)  # 应输出 torch.Size([1, x, 4096])
+                # print("合并后的形状:", merged_output.shape)  # 应输出 torch.Size([1, x, 4096])
                 
         else:
             outputs = self.model(
@@ -292,11 +289,10 @@ def add_medusa_heads(
             query = self.proj_layers[i](embedded)
             SiLued = self.medusa_head[i](merged_output)
             predicted = self.cross_attn[i](query, SiLued)
-            print("predicted shape:", predicted.shape)
+            # print("predicted shape:", predicted.shape) #应该输出[1,seq_len,Voacb_size]
             medusa_logits.append(predicted)
-            print("extend_predicted shape:",predicted.shape)
             embedded = POS_embedding(predicted,embedded,0.8)
-        print("medusa_logits shape:", torch.stack(medusa_logits, dim=0).shape)
+        # print("medusa_logits shape:", torch.stack(medusa_logits, dim=0).shape)#应该输出[medusa_num_heads+1,1,seq_len,Vocab_size]
         return torch.stack(medusa_logits, dim=0)
     
     self.forward = types.MethodType(forward, self)
