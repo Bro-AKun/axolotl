@@ -193,6 +193,9 @@ def add_medusa_heads(
     # Ensure medusa_head's dtype and device align with the base_model
     self.medusa_head.to(self.dtype).to(self.device)
     self.old_forward = self.forward
+    # for i in range(medusa_num_heads):
+        # Initialize the weights of each medusa_head using the base model's weights
+        # self.medusa_head[i][-1].weight.data[:] = self.lm_head.weight.data[:]
 
     # for i in range(medusa_num_heads):
     #     # Initialize the weights of each medusa_head using the base model's weights
