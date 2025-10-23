@@ -452,26 +452,42 @@ def replace_create_optimizer(
             decay_parameters = self.get_decay_parameter_names(opt_model)
             # Separately set lr for medusa_head
             optimizer_grouped_parameters = [
+                # 组1：仅主干模型参数（严格排除所有自定义模块）
                 {
                     "params": [
-                        p for n, p in opt_model.named_parameters() if (n in decay_parameters and p.requires_grad and all(k not in n for k in ["medusa_head", "cross_attn", "proj_layers"]))
+                        p for n, p in opt_model.named_parameters()
+                        if (n in decay_parameters 
+                            and p.requires_grad
+                            and "medusa_head" not in n
+                            and "cross_attn" not in n 
+                            and "proj_layers" not in n)
                     ],
                     "weight_decay": self.args.weight_decay,
                 },
+                # 组2：Medusa相关参数（包含所有自定义模块）
                 {
                     "params": [
-                        p for n, p in opt_model.named_parameters() if (p.requires_grad and any(k in n for k in ["medusa_head", "cross_attn", "proj_layers"]))
+                        p for n, p in opt_model.named_parameters()
+                        if (p.requires_grad
+                            and ("medusa_head" in n 
+                                or "cross_attn" in n 
+                                or "proj_layers" in n))
                     ],
                     "weight_decay": self.args.weight_decay,
                     "lr": self.args.learning_rate * medusa_lr_multiplier,
                 },
-                
+                # 组3：其他无decay参数（排除自定义模块）
                 {
                     "params": [
-                        p for n, p in opt_model.named_parameters() if (n not in decay_parameters and p.requires_grad)
+                        p for n, p in opt_model.named_parameters()
+                        if (n not in decay_parameters 
+                            and p.requires_grad
+                            and "medusa_head" not in n
+                            and "cross_attn" not in n 
+                            and "proj_layers" not in n)
                     ],
                     "weight_decay": 0.0,
-                },
+                }
             ]
 
             optimizer_cls, optimizer_kwargs = Trainer.get_optimizer_cls_and_kwargs(self.args)
