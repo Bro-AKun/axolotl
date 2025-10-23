@@ -293,14 +293,14 @@ def add_medusa_heads(
             medusa_logits.append(predicted)
             embedded = POS_embedding(predicted,embedded,0.8)
         # print("medusa_logits shape:", torch.stack(medusa_logits, dim=0).shape)#应该输出[medusa_num_heads+1,1,seq_len,Vocab_size]
-            if self.training:  # 仅在训练时检查
-        for name, param in self.named_parameters():
-            if param.requires_grad and "medusa" in name.lower():  # 只检查Medusa相关参数
-                if param.grad is None:
-                    print(f"[梯度检查] ❌ 参数无梯度: {name}")
-                else:
-                    grad_norm = param.grad.norm().item()
-                    print(f"[梯度检查] ✅ {name}: 梯度范数={grad_norm:.6f}")
+        if self.training:  # 仅在训练时检查
+            for name, param in self.named_parameters():
+                if param.requires_grad and "medusa" in name.lower():  # 只检查Medusa相关参数
+                    if param.grad is None:
+                        print(f"[梯度检查] ❌ 参数无梯度: {name}")
+                    else:
+                        grad_norm = param.grad.norm().item()
+                        print(f"[梯度检查] ✅ {name}: 梯度范数={grad_norm:.6f}")
         return torch.stack(medusa_logits, dim=0)
     
     self.forward = types.MethodType(forward, self)
