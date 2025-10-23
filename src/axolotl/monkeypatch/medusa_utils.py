@@ -372,312 +372,312 @@ def replace_compute_loss(
     medusa_distillation_regularization=0.0,
     medusa_self_distillation=False,
 ):
-#     def compute_loss(self, model, inputs, return_outputs=False):
-#         """
-#         Compute the training loss for the model with enhanced debugging.
-    
-#         Args:
-#             model (torch.nn.Module): The model for which to compute the loss.
-#             inputs (dict): The input data, including input IDs, attention mask, and labels.
-#             return_outputs (bool): Whether to return model outputs along with the loss.
-    
-#         Returns:
-#             Union[float, Tuple[float, torch.Tensor]]: The computed loss, optionally with model outputs.
-#         """
-#         # ===== 1. 输入数据检查 =====
-#         print("\n" + "="*40)
-#         print("===== compute_loss 调试信息 =====")
-#         print("="*40)
-#         print("\n[输入数据检查]")
-#         print(f"输入 keys: {list(inputs.keys())}")
-#         if "input_ids" in inputs:
-#             print(f"input_ids shape: {inputs['input_ids'].shape}")
-#         if "attention_mask" in inputs:
-#             print(f"attention_mask shape: {inputs['attention_mask'].shape}")
-#         print(f"labels shape: {inputs['labels'].shape}")
-        
-#         # 检查标签分布
-#         labels = inputs["labels"]
-#         unique_labels = torch.unique(labels)
-#         print(f"labels unique values: {unique_labels.cpu().numpy().tolist()}")
-        
-#         # 计算IGNORE_TOKEN_ID比例
-#         ignore_mask = labels == IGNORE_TOKEN_ID
-#         ignore_ratio = ignore_mask.float().mean().item()
-#         print(f"IGNORE_TOKEN_ID比例: {ignore_ratio:.2%}")
-#         if ignore_ratio > 0.9:
-#             print("⚠️ 警告: 超过90%的标签被忽略，可能导致训练信号不足")
-    
-#         # ===== 2. 模型前向传播 =====
-#         print("\n[模型前向传播]")
-#         if medusa_self_distillation:
-#             print("\n-- 自蒸馏模式 --")
-#             from peft.tuners.tuners_utils import BaseTunerLayer
-#             with torch.inference_mode():
-#                 # 禁用适配器获取原始输出
-#                 for module in model.modules():
-#                     if isinstance(module, (BaseTunerLayer)):
-#                         module.enable_adapters(False)
-                
-#                 original_logits = model(**inputs, medusa_return=False).logits
-#                 print(f"原始模型输出 shape: {original_logits.shape}")
-#                 print(f"原始logits范围: [{original_logits.min().item():.3f}, {original_logits.max().item():.3f}]")
-                
-#                 # 恢复适配器
-#                 for module in model.modules():
-#                     if isinstance(module, (BaseTunerLayer)):
-#                         module.enable_adapters(True)
-    
-#         # Medusa模型前向
-#         logits = model(
-#             **inputs,
-#             medusa_return=True,
-#             medusa_only_heads=medusa_only_heads,
-#         )
-#         print(f"\nMedusa模型输出 shape: {logits.shape} (medusa_heads={logits.shape[0]})")
-#         print(f"Medusa logits范围: [{logits.min().item():.3f}, {logits.max().item():.3f}]")
-        
-#         # 检查NaN/Inf
-#         if torch.isnan(logits).any():
-#             print("❌ 错误: logits中包含NaN!")
-#         if torch.isinf(logits).any():
-#             print("❌ 错误: logits中包含Inf!")
-    
-#         # ===== 3. 各Medusa头损失计算 =====
-#         print("\n[损失计算]")
-#         loss = 0
-#         loss_fct = CrossEntropyLoss()
-#         log = {}
-#         medusa_num_heads = logits.shape[0]
-        
-#         for i in range(medusa_num_heads):
-#             print(f"\n-- Medusa头 {i}/{medusa_num_heads-1} --")
-            
-#             # 切片处理
-#             head_logits = logits[i, :, : -(1 + i)].contiguous()
-#             head_labels = labels[..., 1 + i :].contiguous()
-#             print(f"处理后的logits shape: {head_logits.shape}")
-#             print(f"处理后的labels shape: {head_labels.shape}")
-            
-#             # 展平
-#             head_logits = head_logits.view(-1, logits.shape[-1])
-#             head_labels = head_labels.view(-1).to(head_logits.device)
-            
-#             # 有效标签统计
-#             active_mask = head_labels != IGNORE_TOKEN_ID
-#             active_count = active_mask.sum().item()
-#             total_count = head_labels.numel()
-#             print(f"有效token: {active_count}/{total_count} ({active_count/total_count:.1%})")
-            
-#             if active_count == 0:
-#                 print("⚠️ 警告: 当前头没有有效标签，跳过损失计算")
-#                 continue
-    
-#             # 损失计算
-#             if i == 0:
-#                 if medusa_self_distillation:
-#                     print("\n自蒸馏损失计算")
-#                     original_logits_flat = original_logits[:, :-1].contiguous().view(-1, original_logits.shape[-1])
-#                     mask = active_mask & (head_labels != IGNORE_TOKEN_ID)
-#                     print(f"蒸馏mask中True数量: {mask.sum().item()}")
-                    
-#                     soft_labels = F.softmax(original_logits_flat[mask], dim=-1)
-#                     loss_i = F.kl_div(
-#                         F.log_softmax(head_logits[mask], dim=-1),
-#                         soft_labels,
-#                         reduction="sum",
-#                     ) / head_logits.shape[0]
-                    
-#                 elif medusa_distillation_regularization > 0:
-#                     print("\n蒸馏正则化损失计算")
-#                     mask = active_mask
-#                     soft_labels = (
-#                         F.softmax(head_logits[mask], dim=-1) * medusa_distillation_regularization + 
-#                         F.one_hot(head_labels[mask], num_classes=head_logits.shape[-1]) * (1 - medusa_distillation_regularization)
-#                     )
-#                     loss_i = F.kl_div(
-#                         F.log_softmax(head_logits[mask], dim=-1),
-#                         soft_labels,
-#                         reduction="sum",
-#                     ) / head_logits.shape[0]
-                    
-#                 else:
-#                     print("\n标准交叉熵损失计算")
-#                     loss_i = loss_fct(head_logits, head_labels)
-#             else:
-#                 loss_i = loss_fct(head_logits, head_labels)
-            
-#             # 损失系数调整
-#             if medusa_scheduler == "sine":
-#                 medusa_coeff = math.sin(self.state.global_step / self.state.max_steps * math.pi / 2)
-#             elif medusa_scheduler == "linear":
-#                 medusa_coeff = self.state.global_step / self.state.max_steps
-#             else:
-#                 medusa_coeff = 1
-            
-#             if i == 0:
-#                 if not medusa_only_heads:
-#                     loss += loss_i
-#             else:
-#                 loss += loss_i * (medusa_decay_coefficient ** i) * medusa_heads_coefficient * medusa_coeff
-            
-#             print(f"当前头损失值: {loss_i.item():.6f}")
-#             print(f"当前头权重系数: {medusa_decay_coefficient ** i:.4f} * {medusa_heads_coefficient:.4f} * {medusa_coeff:.4f}")
-            
-#             # 记录日志
-#             log[f"medusa{i}_loss"] = loss_i.item()
-#             log["medusa_scheduler_coefficient"] = medusa_coeff
-    
-#         # ===== 4. 最终检查和输出 =====
-#         print("\n[最终结果]")
-#         print(f"总损失: {loss.item():.6f}")
-        
-#         if model.training:
-#             print("\n[梯度检查]")
-#             for name, param in model.named_parameters():
-#                 if param.requires_grad and ("medusa_head" in name or "cross_attn" in name):
-#                     grad_status = "✅ 有梯度" if param.grad is not None else "❌ 无梯度"
-#                     print(f"{name}: {grad_status}")
-#                     if param.grad is not None:
-#                         print(f"  梯度范数: {param.grad.norm().item():.6f}")
-    
-#         # 日志处理
-#         prefix = "train" if model.training else "eval"
-#         log = {f"{prefix}/{k}": v for k, v in log.items()}
-        
-#         if medusa_logging and self.state.is_world_process_zero:
-#             wandb.log({
-#                 **log,
-#                 "train/global_step": self.state.global_step,
-#             })
-    
-#         return (loss, logits) if return_outputs else loss
     def compute_loss(self, model, inputs, return_outputs=False):
         """
-        Compute the training loss for the model.
-
+        Compute the training loss for the model with enhanced debugging.
+    
         Args:
             model (torch.nn.Module): The model for which to compute the loss.
             inputs (dict): The input data, including input IDs, attention mask, and labels.
             return_outputs (bool): Whether to return model outputs along with the loss.
-
+    
         Returns:
             Union[float, Tuple[float, torch.Tensor]]: The computed loss, optionally with model outputs.
         """
+        # ===== 1. 输入数据检查 =====
+        print("\n" + "="*40)
+        print("===== compute_loss 调试信息 =====")
+        print("="*40)
+        print("\n[输入数据检查]")
+        print(f"输入 keys: {list(inputs.keys())}")
+        if "input_ids" in inputs:
+            print(f"input_ids shape: {inputs['input_ids'].shape}")
+        if "attention_mask" in inputs:
+            print(f"attention_mask shape: {inputs['attention_mask'].shape}")
+        print(f"labels shape: {inputs['labels'].shape}")
+        
+        # 检查标签分布
+        labels = inputs["labels"]
+        unique_labels = torch.unique(labels)
+        print(f"labels unique values: {unique_labels.cpu().numpy().tolist()}")
+        
+        # 计算IGNORE_TOKEN_ID比例
+        ignore_mask = labels == IGNORE_TOKEN_ID
+        ignore_ratio = ignore_mask.float().mean().item()
+        print(f"IGNORE_TOKEN_ID比例: {ignore_ratio:.2%}")
+        if ignore_ratio > 0.9:
+            print("⚠️ 警告: 超过90%的标签被忽略，可能导致训练信号不足")
+    
+        # ===== 2. 模型前向传播 =====
+        print("\n[模型前向传播]")
         if medusa_self_distillation:
+            print("\n-- 自蒸馏模式 --")
             from peft.tuners.tuners_utils import BaseTunerLayer
             with torch.inference_mode():
-                # Get the output of the original model for distillation
+                # 禁用适配器获取原始输出
                 for module in model.modules():
                     if isinstance(module, (BaseTunerLayer)):
                         module.enable_adapters(False)
                 
-                original_logits = model(
-                    **inputs,
-                    medusa_return=False,
-                ).logits
-
+                original_logits = model(**inputs, medusa_return=False).logits
+                print(f"原始模型输出 shape: {original_logits.shape}")
+                print(f"原始logits范围: [{original_logits.min().item():.3f}, {original_logits.max().item():.3f}]")
+                
+                # 恢复适配器
                 for module in model.modules():
                     if isinstance(module, (BaseTunerLayer)):
                         module.enable_adapters(True)
-
+    
+        # Medusa模型前向
         logits = model(
             **inputs,
             medusa_return=True,
             medusa_only_heads=medusa_only_heads,
         )
-        labels = inputs["labels"]
-        # Shift so that tokens < n predict n
+        print(f"\nMedusa模型输出 shape: {logits.shape} (medusa_heads={logits.shape[0]})")
+        print(f"Medusa logits范围: [{logits.min().item():.3f}, {logits.max().item():.3f}]")
+        
+        # 检查NaN/Inf
+        if torch.isnan(logits).any():
+            print("❌ 错误: logits中包含NaN!")
+        if torch.isinf(logits).any():
+            print("❌ 错误: logits中包含Inf!")
+    
+        # ===== 3. 各Medusa头损失计算 =====
+        print("\n[损失计算]")
         loss = 0
         loss_fct = CrossEntropyLoss()
         log = {}
-        medusa = logits.shape[0]
-        for i in range(medusa):
-            medusa_logits = logits[i, :, : -(1 + i)].contiguous()
-            medusa_labels = labels[..., 1 + i :].contiguous()
-            medusa_logits = medusa_logits.view(-1, logits.shape[-1])
-            medusa_labels = medusa_labels.view(-1)
-            medusa_labels = medusa_labels.to(medusa_logits.device)
+        medusa_num_heads = logits.shape[0]
+        
+        for i in range(medusa_num_heads):
+            print(f"\n-- Medusa头 {i}/{medusa_num_heads-1} --")
+            
+            # 切片处理
+            head_logits = logits[i, :, : -(1 + i)].contiguous()
+            head_labels = labels[..., 1 + i :].contiguous()
+            print(f"处理后的logits shape: {head_logits.shape}")
+            print(f"处理后的labels shape: {head_labels.shape}")
+            
+            # 展平
+            head_logits = head_logits.view(-1, logits.shape[-1])
+            head_labels = head_labels.view(-1).to(head_logits.device)
+            
+            # 有效标签统计
+            active_mask = head_labels != IGNORE_TOKEN_ID
+            active_count = active_mask.sum().item()
+            total_count = head_labels.numel()
+            print(f"有效token: {active_count}/{total_count} ({active_count/total_count:.1%})")
+            
+            if active_count == 0:
+                print("⚠️ 警告: 当前头没有有效标签，跳过损失计算")
+                continue
+    
+            # 损失计算
             if i == 0:
                 if medusa_self_distillation:
-                    original_logits = original_logits[:, :-1].contiguous().view(-1, original_logits.shape[-1])
-                    mask = medusa_labels.ne(IGNORE_TOKEN_ID)
-                    soft_labels = F.softmax(original_logits[mask], dim=-1)
+                    print("\n自蒸馏损失计算")
+                    original_logits_flat = original_logits[:, :-1].contiguous().view(-1, original_logits.shape[-1])
+                    mask = active_mask & (head_labels != IGNORE_TOKEN_ID)
+                    print(f"蒸馏mask中True数量: {mask.sum().item()}")
+                    
+                    soft_labels = F.softmax(original_logits_flat[mask], dim=-1)
                     loss_i = F.kl_div(
-                        F.log_softmax(medusa_logits[mask], dim=-1),
+                        F.log_softmax(head_logits[mask], dim=-1),
                         soft_labels,
                         reduction="sum",
-                    ) / medusa_logits.shape[0]
+                    ) / head_logits.shape[0]
+                    
                 elif medusa_distillation_regularization > 0:
-                    # use soft labels
-                    mask = medusa_labels.ne(IGNORE_TOKEN_ID)
-                    soft_labels = F.softmax(medusa_logits[mask], dim=-1) * medusa_distillation_regularization + \
-                        F.one_hot(medusa_labels[mask], num_classes=medusa_logits.shape[-1]) * (1 - medusa_distillation_regularization)
+                    print("\n蒸馏正则化损失计算")
+                    mask = active_mask
+                    soft_labels = (
+                        F.softmax(head_logits[mask], dim=-1) * medusa_distillation_regularization + 
+                        F.one_hot(head_labels[mask], num_classes=head_logits.shape[-1]) * (1 - medusa_distillation_regularization)
+                    )
                     loss_i = F.kl_div(
-                        F.log_softmax(medusa_logits[mask], dim=-1),
+                        F.log_softmax(head_logits[mask], dim=-1),
                         soft_labels,
                         reduction="sum",
-                    ) / medusa_logits.shape[0]
+                    ) / head_logits.shape[0]
+                    
                 else:
-                    loss_i = loss_fct(medusa_logits, medusa_labels)
+                    print("\n标准交叉熵损失计算")
+                    loss_i = loss_fct(head_logits, head_labels)
             else:
-                loss_i = loss_fct(medusa_logits, medusa_labels)
-            # Compute the coefficient for medusa losses
+                loss_i = loss_fct(head_logits, head_labels)
+            
+            # 损失系数调整
             if medusa_scheduler == "sine":
-                medusa_scheduler_coefficient = math.sin(
-                    self.state.global_step / self.state.max_steps * math.pi / 2
-                )
+                medusa_coeff = math.sin(self.state.global_step / self.state.max_steps * math.pi / 2)
             elif medusa_scheduler == "linear":
-                medusa_scheduler_coefficient = (
-                    self.state.global_step / self.state.max_steps
-                )
-            elif medusa_scheduler == "constant":
-                medusa_scheduler_coefficient = 1
-            elif medusa_scheduler.startswith("sine"):
-                ratio = float(medusa_scheduler.split("_")[1])
-                if self.state.global_step / self.state.max_steps < ratio:
-                    medusa_scheduler_coefficient = math.sin(
-                        self.state.global_step / self.state.max_steps / ratio * math.pi / 2
-                    )
-                else:
-                    medusa_scheduler_coefficient = 1
+                medusa_coeff = self.state.global_step / self.state.max_steps
             else:
-                raise ValueError(
-                    f"Invalid medusa_scheduler: {medusa_scheduler}. "
-                    "Must be one of 'sine', 'linear', or 'constant'."
-                )
-            # Add decay coefficient to the loss
+                medusa_coeff = 1
+            
             if i == 0:
                 if not medusa_only_heads:
                     loss += loss_i
             else:
-                loss += loss_i * medusa_decay_coefficient ** i * medusa_heads_coefficient * medusa_scheduler_coefficient
-            not_ignore = medusa_labels.ne(IGNORE_TOKEN_ID)
-            medusa_labels = medusa_labels[not_ignore]
-
-            # Add top-k accuracy
-            for k in range(1, 10):
-                _, topk = medusa_logits.topk(k, dim=-1)
-                topk = topk[not_ignore]
-                correct = topk.eq(medusa_labels.unsqueeze(-1)).any(-1)
-                log[f"medusa{i}_top{k}"] = correct.float().mean().item()
-
+                loss += loss_i * (medusa_decay_coefficient ** i) * medusa_heads_coefficient * medusa_coeff
+            
+            print(f"当前头损失值: {loss_i.item():.6f}")
+            print(f"当前头权重系数: {medusa_decay_coefficient ** i:.4f} * {medusa_heads_coefficient:.4f} * {medusa_coeff:.4f}")
+            
+            # 记录日志
             log[f"medusa{i}_loss"] = loss_i.item()
-            log["medusa_scheduler_coefficient"] = medusa_scheduler_coefficient
-        # self.log(log)
-        # Add prefix to the log
+            log["medusa_scheduler_coefficient"] = medusa_coeff
+    
+        # ===== 4. 最终检查和输出 =====
+        print("\n[最终结果]")
+        print(f"总损失: {loss.item():.6f}")
+        
         if model.training:
-            prefix = "train"
-        else:
-            prefix = "eval"
+            print("\n[梯度检查]")
+            for name, param in model.named_parameters():
+                if param.requires_grad and ("medusa_head" in name or "cross_attn" in name):
+                    grad_status = "✅ 有梯度" if param.grad is not None else "❌ 无梯度"
+                    print(f"{name}: {grad_status}")
+                    if param.grad is not None:
+                        print(f"  梯度范数: {param.grad.norm().item():.6f}")
+    
+        # 日志处理
+        prefix = "train" if model.training else "eval"
         log = {f"{prefix}/{k}": v for k, v in log.items()}
+        
         if medusa_logging and self.state.is_world_process_zero:
-            # Hardcoded for now
             wandb.log({
                 **log,
                 "train/global_step": self.state.global_step,
             })
+    
         return (loss, logits) if return_outputs else loss
+    # def compute_loss(self, model, inputs, return_outputs=False):
+    #     """
+    #     Compute the training loss for the model.
+
+    #     Args:
+    #         model (torch.nn.Module): The model for which to compute the loss.
+    #         inputs (dict): The input data, including input IDs, attention mask, and labels.
+    #         return_outputs (bool): Whether to return model outputs along with the loss.
+
+    #     Returns:
+    #         Union[float, Tuple[float, torch.Tensor]]: The computed loss, optionally with model outputs.
+    #     """
+    #     if medusa_self_distillation:
+    #         from peft.tuners.tuners_utils import BaseTunerLayer
+    #         with torch.inference_mode():
+    #             # Get the output of the original model for distillation
+    #             for module in model.modules():
+    #                 if isinstance(module, (BaseTunerLayer)):
+    #                     module.enable_adapters(False)
+                
+    #             original_logits = model(
+    #                 **inputs,
+    #                 medusa_return=False,
+    #             ).logits
+
+    #             for module in model.modules():
+    #                 if isinstance(module, (BaseTunerLayer)):
+    #                     module.enable_adapters(True)
+
+    #     logits = model(
+    #         **inputs,
+    #         medusa_return=True,
+    #         medusa_only_heads=medusa_only_heads,
+    #     )
+    #     labels = inputs["labels"]
+    #     # Shift so that tokens < n predict n
+    #     loss = 0
+    #     loss_fct = CrossEntropyLoss()
+    #     log = {}
+    #     medusa = logits.shape[0]
+    #     for i in range(medusa):
+    #         medusa_logits = logits[i, :, : -(1 + i)].contiguous()
+    #         medusa_labels = labels[..., 1 + i :].contiguous()
+    #         medusa_logits = medusa_logits.view(-1, logits.shape[-1])
+    #         medusa_labels = medusa_labels.view(-1)
+    #         medusa_labels = medusa_labels.to(medusa_logits.device)
+    #         if i == 0:
+    #             if medusa_self_distillation:
+    #                 original_logits = original_logits[:, :-1].contiguous().view(-1, original_logits.shape[-1])
+    #                 mask = medusa_labels.ne(IGNORE_TOKEN_ID)
+    #                 soft_labels = F.softmax(original_logits[mask], dim=-1)
+    #                 loss_i = F.kl_div(
+    #                     F.log_softmax(medusa_logits[mask], dim=-1),
+    #                     soft_labels,
+    #                     reduction="sum",
+    #                 ) / medusa_logits.shape[0]
+    #             elif medusa_distillation_regularization > 0:
+    #                 # use soft labels
+    #                 mask = medusa_labels.ne(IGNORE_TOKEN_ID)
+    #                 soft_labels = F.softmax(medusa_logits[mask], dim=-1) * medusa_distillation_regularization + \
+    #                     F.one_hot(medusa_labels[mask], num_classes=medusa_logits.shape[-1]) * (1 - medusa_distillation_regularization)
+    #                 loss_i = F.kl_div(
+    #                     F.log_softmax(medusa_logits[mask], dim=-1),
+    #                     soft_labels,
+    #                     reduction="sum",
+    #                 ) / medusa_logits.shape[0]
+    #             else:
+    #                 loss_i = loss_fct(medusa_logits, medusa_labels)
+    #         else:
+    #             loss_i = loss_fct(medusa_logits, medusa_labels)
+    #         # Compute the coefficient for medusa losses
+    #         if medusa_scheduler == "sine":
+    #             medusa_scheduler_coefficient = math.sin(
+    #                 self.state.global_step / self.state.max_steps * math.pi / 2
+    #             )
+    #         elif medusa_scheduler == "linear":
+    #             medusa_scheduler_coefficient = (
+    #                 self.state.global_step / self.state.max_steps
+    #             )
+    #         elif medusa_scheduler == "constant":
+    #             medusa_scheduler_coefficient = 1
+    #         elif medusa_scheduler.startswith("sine"):
+    #             ratio = float(medusa_scheduler.split("_")[1])
+    #             if self.state.global_step / self.state.max_steps < ratio:
+    #                 medusa_scheduler_coefficient = math.sin(
+    #                     self.state.global_step / self.state.max_steps / ratio * math.pi / 2
+    #                 )
+    #             else:
+    #                 medusa_scheduler_coefficient = 1
+    #         else:
+    #             raise ValueError(
+    #                 f"Invalid medusa_scheduler: {medusa_scheduler}. "
+    #                 "Must be one of 'sine', 'linear', or 'constant'."
+    #             )
+    #         # Add decay coefficient to the loss
+    #         if i == 0:
+    #             if not medusa_only_heads:
+    #                 loss += loss_i
+    #         else:
+    #             loss += loss_i * medusa_decay_coefficient ** i * medusa_heads_coefficient * medusa_scheduler_coefficient
+    #         not_ignore = medusa_labels.ne(IGNORE_TOKEN_ID)
+    #         medusa_labels = medusa_labels[not_ignore]
+
+    #         # Add top-k accuracy
+    #         for k in range(1, 10):
+    #             _, topk = medusa_logits.topk(k, dim=-1)
+    #             topk = topk[not_ignore]
+    #             correct = topk.eq(medusa_labels.unsqueeze(-1)).any(-1)
+    #             log[f"medusa{i}_top{k}"] = correct.float().mean().item()
+
+    #         log[f"medusa{i}_loss"] = loss_i.item()
+    #         log["medusa_scheduler_coefficient"] = medusa_scheduler_coefficient
+    #     # self.log(log)
+    #     # Add prefix to the log
+    #     if model.training:
+    #         prefix = "train"
+    #     else:
+    #         prefix = "eval"
+    #     log = {f"{prefix}/{k}": v for k, v in log.items()}
+    #     if medusa_logging and self.state.is_world_process_zero:
+    #         # Hardcoded for now
+    #         wandb.log({
+    #             **log,
+    #             "train/global_step": self.state.global_step,
+    #         })
+    #     return (loss, logits) if return_outputs else loss
     transformers.trainer.Trainer.compute_loss = compute_loss
 
 def replace_create_optimizer(
