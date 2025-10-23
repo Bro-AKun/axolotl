@@ -99,6 +99,12 @@ class CrossAttention(nn.Module):
         if hasattr(lm_head_layer, 'bias') and lm_head_layer.bias is not None:
             self.proj.bias.data.copy_(lm_head_layer.bias.data)
 
+        lm_head_norm = lm_head_layer.weight.norm(p=2).item()  # 计算L2范数
+        nn.init.xavier_normal_(self.value.weight)  # 先用Xavier初始化
+        current_norm = self.value.weight.norm(p=2).item()
+        scale_factor = lm_head_norm / (current_norm + 1e-6)  # 防止除零
+        with torch.no_grad():
+            self.value.weight.data *= scale_factor
 
         self.dropout = nn.Dropout(dropout)
         
