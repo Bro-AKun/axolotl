@@ -546,8 +546,8 @@ def replace_create_optimizer(
             #         if p.requires_grad and p not in total_params
             #     ]
             #     print(f"未分配的参数: {missing_params[:5]}...")  # 打印前5个
-            print("✅ 任务完成，程序退出")
-            sys.exit(0)
+            # print("✅ 任务完成，程序退出")
+            # sys.exit(0)
             optimizer_cls, optimizer_kwargs = Trainer.get_optimizer_cls_and_kwargs(self.args)
 
             if self.sharded_ddp == ShardedDDPOption.SIMPLE:
