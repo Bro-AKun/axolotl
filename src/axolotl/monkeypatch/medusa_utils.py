@@ -460,6 +460,9 @@ def replace_create_optimizer(
             print("啊毒品哈代得到大家")
             decay_parameters = self.get_decay_parameter_names(opt_model)
             print("看着利亚decay_parameters:", decay_parameters)
+            print("\n===== 模型参数列表 =====")
+            for name, param in opt_model.named_parameters():
+                print(f"{name}: shape={tuple(param.shape)}, requires_grad={param.requires_grad}")
             # Separately set lr for medusa_head
             optimizer_grouped_parameters = [
             # 组1：Medusa相关参数（更高学习率）
