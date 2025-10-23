@@ -9,7 +9,7 @@ load_in_4bit: false
 strict: false
 
 datasets:
-  - path: /workspace/data/liuzijun/research/zh_workspace/CVPR_2026/zyk/axolotl/ShareGPT_V4.3_unfiltered_cleaned_split.json
+  - path: /mnt/task_runtime/zyk/ShareGPT_V4.3_unfiltered_cleaned_split.json
     type: sharegpt
 dataset_prepared_path:
 val_set_size: 0.01
@@ -71,3 +71,4 @@ medusa_only_heads: true
 ddp_find_unused_parameters: true
 # Stage 1: only train the medusa heads
 # Stage 2: train the whole model
+#/workspace/data/liuzijun/research/zh_workspace/CVPR_2026/zyk/axolotl/ShareGPT_V4.3_unfiltered_cleaned_split.json
