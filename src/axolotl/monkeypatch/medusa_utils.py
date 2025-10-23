@@ -323,8 +323,8 @@ def add_medusa_heads(
             test_input = torch.randn(1, 64, self.config.hidden_size).to(self.device)
             test_output = self.medusa_head[0](test_input)
             LOG.info(f"测试输出范围: [{test_output.min().item():.4f}, {test_output.max().item():.4f}]")
-        print("✅ 任务完成，程序退出")
-        sys.exit(0)
+        # print("✅ 任务完成，程序退出")
+        # sys.exit(0)
         return torch.stack(medusa_logits, dim=0)
     
     self.forward = types.MethodType(forward, self)
