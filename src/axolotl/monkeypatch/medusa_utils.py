@@ -512,7 +512,7 @@ def replace_create_optimizer(
                 print(f"  参数数量: {len(group['params'])}")
                 
                 # 打印前3个参数示例
-                for p in group["params"][:3]:
+                for p in group["params"][:]:
                     name = [n for n, param in opt_model.named_parameters() if param is p][0]
                     print(f"  - {name}")
                     
