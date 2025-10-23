@@ -465,9 +465,9 @@ def replace_create_optimizer(
         opt_model = self.model_wrapped if is_sagemaker_mp_enabled() else self.model
 
         if self.optimizer is None:
-            print("啊毒品哈代得到大家")
+            # print("啊毒品哈代得到大家")
             decay_parameters = self.get_decay_parameter_names(opt_model)
-            print("看着利亚decay_parameters:", decay_parameters)
+            print("decay_parameters:", decay_parameters)
             print("\n===== 模型参数列表 =====")
             for name, param in opt_model.named_parameters():
                 print(f"{name}: shape={tuple(param.shape)}, requires_grad={param.requires_grad}")
@@ -516,24 +516,24 @@ def replace_create_optimizer(
                     name = [n for n, param in opt_model.named_parameters() if param is p][0]
                     print(f"  - {name}")
                     
-                # 检查重复
-                for p in group["params"]:
-                    if p in total_params:
-                        name = [n for n, param in opt_model.named_parameters() if param is p][0]
-                        print(f"❌ 参数重复: {name}")
-                    total_params.add(p)
-            
+                # # 检查重复
+                # for p in group["params"]:
+                #     if p in total_params:
+                #         name = [n for n, param in opt_model.named_parameters() if param is p][0]
+                #         print(f"❌ 参数重复: {name}")
+                #     total_params.add(p)
+            print("shape:",total_params[40].shape)
             print(f"\n总可训练参数: {len(total_params)}")
             print(f"总模型参数: {sum(p.requires_grad for p in opt_model.parameters())}")
             
-            # 检查是否所有参数都被分配
-            if len(total_params) != sum(p.requires_grad for p in opt_model.parameters()):
-                print("❌ 警告：有参数未被分配到任何组！")
-                missing_params = [
-                    n for n, p in opt_model.named_parameters() 
-                    if p.requires_grad and p not in total_params
-                ]
-                print(f"未分配的参数: {missing_params[:5]}...")  # 打印前5个
+            # # 检查是否所有参数都被分配
+            # if len(total_params) != sum(p.requires_grad for p in opt_model.parameters()):
+            #     print("❌ 警告：有参数未被分配到任何组！")
+            #     missing_params = [
+            #         n for n, p in opt_model.named_parameters() 
+            #         if p.requires_grad and p not in total_params
+            #     ]
+            #     print(f"未分配的参数: {missing_params[:5]}...")  # 打印前5个
             print("✅ 任务完成，程序退出")
             sys.exit(0)
             optimizer_cls, optimizer_kwargs = Trainer.get_optimizer_cls_and_kwargs(self.args)
@@ -562,20 +562,6 @@ def replace_create_optimizer(
 
         if is_sagemaker_mp_enabled():
             self.optimizer = smp.DistributedOptimizer(self.optimizer)
-
-        print("\n===== 优化器参数分配检查 =====")
-        total_params = set()
-        for i, group in enumerate(optimizer_grouped_parameters):
-            print(f"参数组 {i}: LR={group.get('lr', 'default')}, WD={group['weight_decay']}")
-            for p in group["params"]:
-                param_name = [n for n, param in opt_model.named_parameters() if param is p][0]
-                print(f"  - {param_name}")
-                if p in total_params:
-                    print(f"❌ 参数重复分配: {param_name}")
-                total_params.add(p)
-        
-        print(f"\n总可训练参数: {len(total_params)}")
-        print(f"总模型参数: {sum(p.requires_grad for p in opt_model.parameters())}")
         
         return self.optimizer
     transformers.trainer.Trainer.create_optimizer = create_optimizer
