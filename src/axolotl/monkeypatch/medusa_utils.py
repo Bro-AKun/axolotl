@@ -268,7 +268,7 @@ def add_medusa_heads(
                 # print("Number of layers:", len(all_layer_outputs))  # 打印层数
                 # for i, layer_output in enumerate(all_layer_outputs):
                 #     print(f"Layer {i} output shape:", layer_output.shape)
-            x = 20
+            x = 10
             #     # 1. 提取后x层的输出
             # last_x_layers = all_layer_outputs[-x:]  # 列表，包含x个 [1, 4096, 4096] 张量
 
@@ -592,6 +592,7 @@ def replace_compute_loss(
             medusa_return=True,
             medusa_only_heads=medusa_only_heads,
         )
+        logits = torch.clamp(logits, -200.0, 200.0)
         labels = inputs["labels"]
         # Shift so that tokens < n predict n
         loss = 0
