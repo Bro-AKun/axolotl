@@ -263,17 +263,35 @@ def add_medusa_heads(
                 # for i, layer_output in enumerate(all_layer_outputs):
                 #     print(f"Layer {i} output shape:", layer_output.shape)
             x = 10
-                # 1. 提取后x层的输出
-            last_x_layers = all_layer_outputs[-x:]  # 列表，包含x个 [1, 4096, 4096] 张量
+            #     # 1. 提取后x层的输出
+            # last_x_layers = all_layer_outputs[-x:]  # 列表，包含x个 [1, 4096, 4096] 张量
 
-                # 2. 对每层取最后一个token的隐藏状态 [:, -1, :]
-            last_token_hidden_states = [layer[:, -1, :] for layer in last_x_layers]  # x个 [1, 4096] 张量
+            #     # 2. 对每层取最后一个token的隐藏状态 [:, -1, :]
+            # last_token_hidden_states = [layer[:, -1, :] for layer in last_x_layers]  # x个 [1, 4096] 张量
 
-                # 3. 堆叠为 [1, x, 4096]
+            #     # 3. 堆叠为 [1, x, 4096]
+            # merged_output = torch.stack(last_token_hidden_states, dim=1)  # [1, x, 4096]
+
+            #     # 验证形状
+            #     # print("合并后的形状:", merged_output.shape)  # 应输出 torch.Size([1, x, 4096])
+
+            last_x_layers = all_layer_outputs[-x:]  # x个 [1, seq_len, 4096]
+            last_token_hidden_states = []
+            for layer in last_x_layers:
+                # 取最后一个token的特征 [1, 4096]
+                token_features = layer[:, -1, :]
+                
+                # 层内归一化（按特征维度）
+                token_features = F.layer_norm(
+                    token_features, 
+                    normalized_shape=[token_features.size(-1)],  # 对4096维归一化
+                    eps=1e-6
+                )
+                last_token_hidden_states.append(token_features)
+            
+            # 3. 堆叠并添加全局归一化
             merged_output = torch.stack(last_token_hidden_states, dim=1)  # [1, x, 4096]
-
-                # 验证形状
-                # print("合并后的形状:", merged_output.shape)  # 应输出 torch.Size([1, x, 4096])
+            merged_output = F.layer_norm(merged_output, [x, 4096], eps=1e-6)  # 跨层归一化
                 
         else:
             outputs = self.model(
