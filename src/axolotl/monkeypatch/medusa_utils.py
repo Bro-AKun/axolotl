@@ -246,23 +246,23 @@ def add_medusa_heads(
                     output_hidden_states=True,
                     return_dict=return_dict,
                 )
-                hidden_states = outputs[0]
-                out_0 = self.lm_head(hidden_states)
-                medusa_logits = [out_0]
+            hidden_states = outputs[0]
+            out_0 = self.lm_head(hidden_states)
+            medusa_logits = [out_0]
 
-                all_layer_outputs = outputs.hidden_states
+            all_layer_outputs = outputs.hidden_states
                 # print("Number of layers:", len(all_layer_outputs))  # 打印层数
                 # for i, layer_output in enumerate(all_layer_outputs):
                 #     print(f"Layer {i} output shape:", layer_output.shape)
-                x = 30  
+            x = 30  
                 # 1. 提取后x层的输出
-                last_x_layers = all_layer_outputs[-x:]  # 列表，包含x个 [1, 4096, 4096] 张量
+            last_x_layers = all_layer_outputs[-x:]  # 列表，包含x个 [1, 4096, 4096] 张量
 
                 # 2. 对每层取最后一个token的隐藏状态 [:, -1, :]
-                last_token_hidden_states = [layer[:, -1, :] for layer in last_x_layers]  # x个 [1, 4096] 张量
+            last_token_hidden_states = [layer[:, -1, :] for layer in last_x_layers]  # x个 [1, 4096] 张量
 
                 # 3. 堆叠为 [1, x, 4096]
-                merged_output = torch.stack(last_token_hidden_states, dim=1)  # [1, x, 4096]
+            merged_output = torch.stack(last_token_hidden_states, dim=1)  # [1, x, 4096]
 
                 # 验证形状
                 # print("合并后的形状:", merged_output.shape)  # 应输出 torch.Size([1, x, 4096])
