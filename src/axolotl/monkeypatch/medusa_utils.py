@@ -105,8 +105,8 @@ class CrossAttention(nn.Module):
         # 缩放因子
         self.scale = self.head_dim ** -0.5
 
-        for param in self.parameters():
-            param.requires_grad = True
+        for p in self.parameters():
+            p.requires_grad_(True)
 
     def forward(self, x, context, mask=None):
         """
@@ -182,6 +182,7 @@ def add_medusa_heads(
             nn.Linear(vocab_size,hidden_size, bias=False)
             for _ in range(medusa_num_heads)
         ])
+    
     for i in range(medusa_num_heads):
         with torch.no_grad():
             self.proj_layers[i].weight.data = self.lm_head.weight.T
@@ -193,6 +194,10 @@ def add_medusa_heads(
     self.cross_attn.to(device).to(dtype)
     self.proj_layers.to(device).to(dtype)
 
+    for module in [self.cross_attn, self.proj_layers]:
+        for param in module.parameters():
+            param.requires_grad_(True)
+    
     # Ensure medusa_head's dtype and device align with the base_model
     self.medusa_head.to(self.dtype).to(self.device)
     self.old_forward = self.forward
