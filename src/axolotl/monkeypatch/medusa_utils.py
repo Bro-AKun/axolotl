@@ -466,8 +466,8 @@ def replace_create_optimizer(
 
         if self.optimizer is None:
             # print("啊毒品哈代得到大家")
-            decay_parameters = self.get_decay_parameter_names(opt_model)
-            print("decay_parameters:", decay_parameters)
+            # decay_parameters = self.get_decay_parameter_names(opt_model)
+            # print("decay_parameters:", decay_parameters)
             print("\n===== 模型参数列表 =====")
             for name, param in opt_model.named_parameters():
                 print(f"{name}: shape={tuple(param.shape)}, requires_grad={param.requires_grad}")
@@ -523,17 +523,17 @@ def replace_create_optimizer(
                 #         print(f"❌ 参数重复: {name}")
                 #     total_params.add(p)
 
-               # 将当前组的参数添加到总列表
-                all_params_list = []
-                all_params_list.extend(group["params"])
+               # # 将当前组的参数添加到总列表
+               #  all_params_list = []
+               #  all_params_list.extend(group["params"])
                 
-                # 检查第40个参数（如果存在）
-                if len(all_params_list) > 40:
-                    param = all_params_list[40]
-                    name = [n for n, p in opt_model.named_parameters() if p is param][0]
-                    print(f"\n第40个参数: {name}, shape={tuple(param.shape)}")
-                else:
-                    print(f"\n⚠️ 总参数数量不足40，当前只有 {len(all_params_list)} 个参数")
+               #  # 检查第40个参数（如果存在）
+               #  if len(all_params_list) > 40:
+               #      param = all_params_list[40]
+               #      name = [n for n, p in opt_model.named_parameters() if p is param][0]
+               #      print(f"\n第40个参数: {name}, shape={tuple(param.shape)}")
+               #  else:
+               #      print(f"\n⚠️ 总参数数量不足40，当前只有 {len(all_params_list)} 个参数")
 
             print(f"\n总可训练参数: {len(total_params)}")
             print(f"总模型参数: {sum(p.requires_grad for p in opt_model.parameters())}")
