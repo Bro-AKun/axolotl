@@ -464,43 +464,67 @@ def replace_create_optimizer(
             sys.exit(0)
             # Separately set lr for medusa_head
             optimizer_grouped_parameters = [
-                # 组1：仅主干模型参数（严格排除所有自定义模块）
-                {
-                    "params": [
-                        p for n, p in opt_model.named_parameters()
-                        if (n in decay_parameters 
-                            and p.requires_grad
-                            and "medusa_head" not in n
-                            and "cross_attn" not in n 
-                            and "proj_layers" not in n)
-                    ],
-                    "weight_decay": self.args.weight_decay,
-                },
-                # 组2：Medusa相关参数（包含所有自定义模块）
+            # 组1：Medusa相关参数（更高学习率）
                 {
                     "params": [
                         p for n, p in opt_model.named_parameters()
                         if (p.requires_grad
-                            and ("medusa_head" in n 
-                                or "cross_attn" in n 
-                                or "proj_layers" in n))
+                            and any(k in n for k in ["medusa_head", "cross_attn", "proj_layers"]))
                     ],
                     "weight_decay": self.args.weight_decay,
                     "lr": self.args.learning_rate * medusa_lr_multiplier,
                 },
-                # 组3：其他无decay参数（排除自定义模块）
+                # 组2：主干模型参数（需要weight decay）
                 {
                     "params": [
                         p for n, p in opt_model.named_parameters()
-                        if (n not in decay_parameters 
-                            and p.requires_grad
-                            and "medusa_head" not in n
-                            and "cross_attn" not in n 
-                            and "proj_layers" not in n)
+                        if (p.requires_grad
+                            and n in decay_parameters
+                            and not any(k in n for k in ["medusa_head", "cross_attn", "proj_layers"]))
+                    ],
+                    "weight_decay": self.args.weight_decay,
+                },
+                # 组3：其他无decay参数（如bias、LayerNorm）
+                {
+                    "params": [
+                        p for n, p in opt_model.named_parameters()
+                        if (p.requires_grad
+                            and n not in decay_parameters
+                            and not any(k in n for k in ["medusa_head", "cross_attn", "proj_layers"]))
                     ],
                     "weight_decay": 0.0,
                 }
             ]
+
+            print("\n===== 修正后的优化器参数分配检查 =====")
+            total_params = set()
+            for i, group in enumerate(optimizer_grouped_parameters):
+                print(f"参数组 {i}: LR={group.get('lr', 'default')}, WD={group['weight_decay']}")
+                print(f"  参数数量: {len(group['params'])}")
+                
+                # 打印前3个参数示例
+                for p in group["params"][:3]:
+                    name = [n for n, param in opt_model.named_parameters() if param is p][0]
+                    print(f"  - {name}")
+                    
+                # 检查重复
+                for p in group["params"]:
+                    if p in total_params:
+                        name = [n for n, param in opt_model.named_parameters() if param is p][0]
+                        print(f"❌ 参数重复: {name}")
+                    total_params.add(p)
+            
+            print(f"\n总可训练参数: {len(total_params)}")
+            print(f"总模型参数: {sum(p.requires_grad for p in opt_model.parameters())}")
+            
+            # 检查是否所有参数都被分配
+            if len(total_params) != sum(p.requires_grad for p in opt_model.parameters()):
+                print("❌ 警告：有参数未被分配到任何组！")
+                missing_params = [
+                    n for n, p in opt_model.named_parameters() 
+                    if p.requires_grad and p not in total_params
+                ]
+                print(f"未分配的参数: {missing_params[:5]}...")  # 打印前5个
 
             optimizer_cls, optimizer_kwargs = Trainer.get_optimizer_cls_and_kwargs(self.args)
 
