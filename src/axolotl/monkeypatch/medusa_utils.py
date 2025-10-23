@@ -460,6 +460,8 @@ def replace_create_optimizer(
             print("啊毒品哈代得到大家")
             decay_parameters = self.get_decay_parameter_names(opt_model)
             print("看着利亚decay_parameters:", decay_parameters)
+            print("✅ 任务完成，程序退出")
+            sys.exit(0)
             # Separately set lr for medusa_head
             optimizer_grouped_parameters = [
                 # 组1：仅主干模型参数（严格排除所有自定义模块）
