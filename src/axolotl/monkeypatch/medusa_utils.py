@@ -293,14 +293,14 @@ def add_medusa_heads(
             medusa_logits.append(predicted)
             embedded = POS_embedding(predicted,embedded,0.8)
         # print("medusa_logits shape:", torch.stack(medusa_logits, dim=0).shape)#应该输出[medusa_num_heads+1,1,seq_len,Vocab_size]
-        if self.training:  # 仅在训练时检查
-            for name, param in self.named_parameters():
-                if param.requires_grad and "medusa" in name.lower():  # 只检查Medusa相关参数
-                    if param.grad is None:
-                        print(f"[梯度检查] ❌ 参数无梯度: {name}")
-                    else:
-                        grad_norm = param.grad.norm().item()
-                        print(f"[梯度检查] ✅ {name}: 梯度范数={grad_norm:.6f}")
+        # if self.training:  # 仅在训练时检查
+        #     for name, param in self.named_parameters():
+        #         if param.requires_grad and "medusa" in name.lower():  # 只检查Medusa相关参数
+        #             if param.grad is None:
+        #                 print(f"[梯度检查] ❌ 参数无梯度: {name}")
+        #             else:
+        #                 grad_norm = param.grad.norm().item()
+        #                 print(f"[梯度检查] ✅ {name}: 梯度范数={grad_norm:.6f}")
         return torch.stack(medusa_logits, dim=0)
     
     self.forward = types.MethodType(forward, self)
@@ -525,6 +525,20 @@ def replace_create_optimizer(
         if is_sagemaker_mp_enabled():
             self.optimizer = smp.DistributedOptimizer(self.optimizer)
 
+        print("\n===== 优化器参数分配检查 =====")
+        total_params = set()
+        for i, group in enumerate(optimizer_grouped_parameters):
+            print(f"参数组 {i}: LR={group.get('lr', 'default')}, WD={group['weight_decay']}")
+            for p in group["params"]:
+                param_name = [n for n, param in opt_model.named_parameters() if param is p][0]
+                print(f"  - {param_name}")
+                if p in total_params:
+                    print(f"❌ 参数重复分配: {param_name}")
+                total_params.add(p)
+        
+        print(f"\n总可训练参数: {len(total_params)}")
+        print(f"总模型参数: {sum(p.requires_grad for p in opt_model.parameters())}")
+        
         return self.optimizer
     transformers.trainer.Trainer.create_optimizer = create_optimizer
 
