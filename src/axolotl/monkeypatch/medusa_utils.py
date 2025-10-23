@@ -105,6 +105,9 @@ class CrossAttention(nn.Module):
         # 缩放因子
         self.scale = self.head_dim ** -0.5
 
+        for param in self.parameters():
+            param.requires_grad = True
+
     def forward(self, x, context, mask=None):
         """
         Args:
