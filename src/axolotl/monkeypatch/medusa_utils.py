@@ -180,8 +180,8 @@ def add_medusa_heads(
             medusa_logits = [self.lm_head(hidden_states)]
         for i in range(self.medusa_num_heads):
             medusa_logits.append(self.medusa_head[i](hidden_states))
-        print("medusa_logits[1]", medusa_logits[1].shape)
-        print("5:",torch.stack(medusa_logits, dim=0).shape)
+        # print("medusa_logits[1]", medusa_logits[1].shape)
+        # print("5:",torch.stack(medusa_logits, dim=0).shape)
         return torch.stack(medusa_logits, dim=0)
     
     self.forward = types.MethodType(forward, self)
