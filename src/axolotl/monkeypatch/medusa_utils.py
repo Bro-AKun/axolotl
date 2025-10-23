@@ -329,15 +329,15 @@ def add_medusa_heads(
     
     self.forward = types.MethodType(forward, self)
 
-# def replace_compute_loss(
-#     medusa_heads_coefficient,
-#     medusa_decay_coefficient, 
-#     medusa_scheduler="constant",
-#     medusa_logging=False,
-#     medusa_only_heads=False,
-#     medusa_distillation_regularization=0.0,
-#     medusa_self_distillation=False,
-# ):
+def replace_compute_loss(
+    medusa_heads_coefficient,
+    medusa_decay_coefficient, 
+    medusa_scheduler="constant",
+    medusa_logging=False,
+    medusa_only_heads=False,
+    medusa_distillation_regularization=0.0,
+    medusa_self_distillation=False,
+):
 #     def compute_loss(self, model, inputs, return_outputs=False):
 #         """
 #         Compute the training loss for the model with enhanced debugging.
