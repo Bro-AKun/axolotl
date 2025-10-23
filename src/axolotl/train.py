@@ -78,13 +78,13 @@ def train(
 
     model.config.use_cache = False
 
-        # 检查 Medusa 参数的梯度
-    for name, param in model.named_parameters():
-        if "medusa_head" in name or "cross_attn" in name or "proj_layers" in name:
-            if param.grad is None:
-                print(f"⚠️ 无梯度: {name}")
-            else:
-                print(f"✅ 梯度正常: {name} (norm={param.grad.norm().item():.4f})")
+    #     # 检查 Medusa 参数的梯度
+    # for name, param in model.named_parameters():
+    #     if "medusa_head" in name or "cross_attn" in name or "proj_layers" in name:
+    #         if param.grad is None:
+    #             print(f"⚠️ 无梯度: {name}")
+    #         else:
+    #             print(f"✅ 梯度正常: {name} (norm={param.grad.norm().item():.4f})")
     
     # go ahead and presave, so we have the adapter config available to inspect
     if peft_config:
