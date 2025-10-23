@@ -309,6 +309,21 @@ def add_medusa_heads(
         #             else:
         #                 grad_norm = param.grad.norm().item()
         #                 print(f"[梯度检查] ✅ {name}: 梯度范数={grad_norm:.6f}")
+        LOG.info("===== 参数初始化检查 =====")
+        for name, param in self.named_parameters():
+            if "medusa_head" in name or "cross_attn" in name:
+                if torch.isnan(param).any():
+                    LOG.error(f"❌ 参数包含NaN: {name}")
+                    # 重新初始化
+                    nn.init.xavier_normal_(param)
+                    LOG.info(f"已重新初始化: {name}")
+        
+        # 验证初始化后输出
+        with torch.no_grad():
+            test_input = torch.randn(1, 64, self.config.hidden_size).to(self.device)
+            test_output = self.medusa_head[0](test_input)
+            LOG.info(f"测试输出范围: [{test_output.min().item():.4f}, {test_output.max().item():.4f}]")
+        
         return torch.stack(medusa_logits, dim=0)
     
     self.forward = types.MethodType(forward, self)
