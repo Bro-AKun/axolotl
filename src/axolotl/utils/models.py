@@ -591,9 +591,13 @@ def load_model(
             for param in model.model.norm.parameters():
                 param.requires_grad = True
 
-        for param in model.medusa_head.parameters():
-            param.requires_grad = True
+        # for param in model.medusa_head.parameters():
+        #     param.requires_grad = True
 
+        for module in [model.medusa_head, model.cross_attn, model.proj_layers]:
+            for param in module.parameters():
+                param.requires_grad = True
+        
         if not cfg.medusa_only_heads:
             for param in model.lm_head.parameters():
                 param.requires_grad = True
