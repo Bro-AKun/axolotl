@@ -454,13 +454,13 @@ def replace_create_optimizer(
             optimizer_grouped_parameters = [
                 {
                     "params": [
-                        p for n, p in opt_model.named_parameters() if (n in decay_parameters and p.requires_grad and "medusa_head" not in n)
+                        p for n, p in opt_model.named_parameters() if (n in decay_parameters and p.requires_grad and all(k not in n for k in ["medusa_head", "cross_attn", "proj_layers"]))
                     ],
                     "weight_decay": self.args.weight_decay,
                 },
                 {
                     "params": [
-                        p for n, p in opt_model.named_parameters() if (n in decay_parameters and p.requires_grad and "medusa_head" in n)
+                        p for n, p in opt_model.named_parameters() if (p.requires_grad and any(k in n for k in ["medusa_head", "cross_attn", "proj_layers"]))
                     ],
                     "weight_decay": self.args.weight_decay,
                     "lr": self.args.learning_rate * medusa_lr_multiplier,
@@ -556,13 +556,13 @@ def replace_create_optimizer(
             model_parameters = [
                 {
                     "params": [
-                        p for n, p in opt_model.named_parameters() if (n in decay_parameters and p.requires_grad and "medusa_head" not in n)
+                        p for n, p in opt_model.named_parameters() if (n in decay_parameters and p.requires_grad and all(k not in n for k in ["medusa_head", "cross_attn", "proj_layers"]))
                     ],
                     "weight_decay": self.args.weight_decay,
                 },
                 {
                     "params": [
-                        p for n, p in opt_model.named_parameters() if (n in decay_parameters and p.requires_grad and "medusa_head" in n)
+                        p for n, p in opt_model.named_parameters() if (p.requires_grad and any(k in n for k in ["medusa_head", "cross_attn", "proj_layers"]))
                     ],
                     "weight_decay": self.args.weight_decay,
                     "lr": self.args.learning_rate * medusa_lr_multiplier,
