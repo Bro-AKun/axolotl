@@ -522,7 +522,7 @@ def replace_create_optimizer(
                 #         name = [n for n, param in opt_model.named_parameters() if param is p][0]
                 #         print(f"❌ 参数重复: {name}")
                 #     total_params.add(p)
-            print("shape:",total_params[40].shape)
+
             print(f"\n总可训练参数: {len(total_params)}")
             print(f"总模型参数: {sum(p.requires_grad for p in opt_model.parameters())}")
             
