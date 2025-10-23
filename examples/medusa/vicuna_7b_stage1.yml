@@ -30,7 +30,7 @@ micro_batch_size: 1
 num_epochs: 2
 optimizer: adamw_bnb_8bit
 lr_scheduler: cosine
-learning_rate: 0.0005
+learning_rate: 0.00005
 
 train_on_inputs: false
 group_by_length: false
@@ -71,3 +71,4 @@ medusa_only_heads: true
 ddp_find_unused_parameters: true
 # Stage 1: only train the medusa heads
 # Stage 2: train the whole model
+# learning_rate: 0.0005
