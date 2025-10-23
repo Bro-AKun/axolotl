@@ -524,6 +524,7 @@ def replace_create_optimizer(
                 #     total_params.add(p)
 
                # 将当前组的参数添加到总列表
+                all_params_list = []
                 all_params_list.extend(group["params"])
                 
                 # 检查第40个参数（如果存在）
