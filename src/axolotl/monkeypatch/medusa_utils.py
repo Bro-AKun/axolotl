@@ -460,8 +460,6 @@ def replace_create_optimizer(
             print("啊毒品哈代得到大家")
             decay_parameters = self.get_decay_parameter_names(opt_model)
             print("看着利亚decay_parameters:", decay_parameters)
-            print("✅ 任务完成，程序退出")
-            sys.exit(0)
             # Separately set lr for medusa_head
             optimizer_grouped_parameters = [
             # 组1：Medusa相关参数（更高学习率）
@@ -525,7 +523,8 @@ def replace_create_optimizer(
                     if p.requires_grad and p not in total_params
                 ]
                 print(f"未分配的参数: {missing_params[:5]}...")  # 打印前5个
-
+            print("✅ 任务完成，程序退出")
+            sys.exit(0)
             optimizer_cls, optimizer_kwargs = Trainer.get_optimizer_cls_and_kwargs(self.args)
 
             if self.sharded_ddp == ShardedDDPOption.SIMPLE:
