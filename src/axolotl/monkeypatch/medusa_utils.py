@@ -292,7 +292,7 @@ def add_medusa_heads(
             # print("predicted shape:", predicted.shape) #应该输出[1,seq_len,Voacb_size]
             medusa_logits.append(predicted)
             embedded = POS_embedding(predicted,embedded,0.8)
-        # print("medusa_logits shape:", torch.stack(medusa_logits, dim=0).shape)#应该输出[medusa_num_heads+1,1,seq_len,Vocab_size]
+        print("medusa_logits shape:", torch.stack(medusa_logits, dim=0).shape)#应该输出[medusa_num_heads+1,1,seq_len,Vocab_size]
         return torch.stack(medusa_logits, dim=0)
     
     self.forward = types.MethodType(forward, self)
