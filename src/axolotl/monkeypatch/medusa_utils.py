@@ -291,7 +291,7 @@ def add_medusa_heads(
                 )
             hidden_states = outputs[0]
             out_0 = self.lm_head(hidden_states)
-            medusa_logits = [out_0]
+            medusa_logits = [out_0.transpose(0,1)]
 
             all_layer_outputs = outputs.hidden_states
                 # print("Number of layers:", len(all_layer_outputs))  # 打印层数
