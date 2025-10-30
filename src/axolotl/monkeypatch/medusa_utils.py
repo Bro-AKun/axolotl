@@ -79,6 +79,40 @@ class ResBlock(nn.Module):
         """
         return x + self.act(self.linear(x))
 
+class Rotator:
+    """根据 hidden_dim 和 position_ids 生成对应的旋转位置编码, 和论文中定义略有不同, 一个个二维的子空间被
+    分割到了前后两部分, 分别进行旋转, 然后拼接起来
+    """
+    def __init__(self, D, position_ids):
+        """ position_ids: [seq_len], D 和单个头的 hidden_dim 对应 """
+        base = 10000
+        d = D / 2
+        B = base ** (1 / d)
+        theta_base = 1.0 / (B ** torch.arange(0, d))        # 等比数列即 $\Theta$
+        thetas = position_ids.outer(theta_base)             # 外积->[seq_len, D/2]
+        full_thetas = torch.cat((thetas, thetas), dim=-1)   # [seq_len, D]
+        self.cos = full_thetas.cos()
+        self.sin = full_thetas.sin()
+
+    def rotate(self, x):
+        """
+        x: [bs, num_attention_heads, seq_len, D]
+        q: [bs, num_attention_heads, seq_len, D]
+        cos: [seq_len, D]
+        [x, y] @ [[cos, sin], [-sin, cos]] = [x*cos-y*sin, y*cos+x*sin] = [x,y]
+        """
+        return x * self.cos + Rotator.reverse_half(x) * self.sin
+    
+    @staticmethod
+    def reverse_half(q):
+        """ q: [bs, num_attention_heads, seq_len, D] trick2 """
+        u = q[..., : q.shape[-1] // 2]  # 认为是各个二维子空间的第一维的向量集结
+        v = q[..., q.shape[-1] // 2 :]  # 认为是各个二维子空间的第二维的向量集结
+        return torch.cat((-v, u), dim=-1)
+
+def avg_pooling(x):
+    return torch.mean(x, dim=1, keepdim=True)
+
 class CrossAttention(nn.Module):
     def __init__(self, embed_dim, num_heads, vocab_dim ,lm_head_layer,dropout=0.1):
         super().__init__()
@@ -87,7 +121,7 @@ class CrossAttention(nn.Module):
         self.head_dim = embed_dim // num_heads
 
         # 线性投影层
-        self.query = nn.Linear(embed_dim, embed_dim)
+        self.query = nn.Linear(vocab_dim, embed_dim)
         self.key = nn.Linear(embed_dim, embed_dim)
         self.value = nn.Linear(embed_dim, embed_dim)
         
@@ -99,11 +133,13 @@ class CrossAttention(nn.Module):
         if hasattr(lm_head_layer, 'bias') and lm_head_layer.bias is not None:
             self.proj.bias.data.copy_(lm_head_layer.bias.data)
 
-
         self.dropout = nn.Dropout(dropout)
         
         # 缩放因子
         self.scale = self.head_dim ** -0.5
+
+        for p in self.parameters():
+            p.requires_grad_(True)
 
     def forward(self, x, context, mask=None):
         """
@@ -124,9 +160,9 @@ class CrossAttention(nn.Module):
         # 2. 计算注意力分数
         attn_scores = torch.matmul(q, k.transpose(-2, -1)) * self.scale  # [B, H, L_q, L_kv]
         
-        # 3. 应用掩码（可选）
-        if mask is not None:
-            attn_scores = attn_scores.masked_fill(mask == 0, float('-inf'))
+        # # 3. 应用掩码（可选）
+        # if mask is not None:
+        #     attn_scores = attn_scores.masked_fill(mask == 0, float('-inf'))
         
         # 4. 注意力权重和输出
         attn_weights = F.softmax(attn_scores, dim=-1)
@@ -139,12 +175,12 @@ class CrossAttention(nn.Module):
         
         return out
 
-def POS_embedding(current_vec: torch.Tensor, 
-                 past_vec: torch.Tensor, 
-                 numda: float) -> torch.Tensor:
-    result = current_vec + numda * past_vec
-    result = result / torch.tensor(1 + numda)
-    return result
+# def POS_embedding(current_vec: torch.Tensor, 
+#                  past_vec: torch.Tensor, 
+#                  numda: float) -> torch.Tensor:
+#     result = current_vec + numda * past_vec
+#     result = result / torch.tensor(1 + numda)
+#     return result
 
 def add_medusa_heads(
     self,
@@ -175,21 +211,26 @@ def add_medusa_heads(
     self.cross_attn = nn.ModuleList(
     [CrossAttention(hidden_size,4,vocab_size,self.lm_head) for _ in range(medusa_num_heads)]
     )
-    self.proj_layers = nn.ModuleList([
-            nn.Linear(vocab_size,hidden_size, bias=False)
-            for _ in range(medusa_num_heads)
-        ])
-    for i in range(medusa_num_heads):
-        with torch.no_grad():
-            self.proj_layers[i].weight.data = self.lm_head.weight.T
-            if self.proj_layers[i].bias is not None:
-                nn.init.zeros_(self.proj_layers[i].bias)
+    # self.proj_layers = nn.ModuleList([
+    #         nn.Linear(vocab_size,hidden_size, bias=False)
+    #         for _ in range(medusa_num_heads)
+    #     ])
+    
+    # for i in range(medusa_num_heads):
+    #     with torch.no_grad():
+    #         self.proj_layers[i].weight.data = self.lm_head.weight.T
+    #         if self.proj_layers[i].bias is not None:
+    #             nn.init.zeros_(self.proj_layers[i].bias)
 
     device = next(self.lm_head.parameters()).device
     dtype = next(self.lm_head.parameters()).dtype
     self.cross_attn.to(device).to(dtype)
-    self.proj_layers.to(device).to(dtype)
+    # self.proj_layers.to(device).to(dtype)
 
+    # for module in [self.cross_attn, self.proj_layers]:
+    #     for param in module.parameters():
+    #         param.requires_grad_(True)
+    
     # Ensure medusa_head's dtype and device align with the base_model
     self.medusa_head.to(self.dtype).to(self.device)
     self.old_forward = self.forward
@@ -246,26 +287,22 @@ def add_medusa_heads(
                     output_hidden_states=True,
                     return_dict=return_dict,
                 )
-                hidden_states = outputs[0]
-                out_0 = self.lm_head(hidden_states)
-                medusa_logits = [out_0]
+            hidden_states = outputs[0]
+            out_0 = self.lm_head(hidden_states)
+            medusa_logits = [out_0]
 
-                all_layer_outputs = outputs.hidden_states
+            all_layer_outputs = outputs.hidden_states
                 # print("Number of layers:", len(all_layer_outputs))  # 打印层数
                 # for i, layer_output in enumerate(all_layer_outputs):
                 #     print(f"Layer {i} output shape:", layer_output.shape)
-                x = 30  
-                # 1. 提取后x层的输出
-                last_x_layers = all_layer_outputs[-x:]  # 列表，包含x个 [1, 4096, 4096] 张量
+            x = 10  
+            x_layers = all_layer_outputs[-x:]  # 列表，包含x个 [1, 4096, 4096] 张量
+            last_x_layers = torch.cat(x_layers, dim=0).transpose(0, 1)
+            print("last_x_layers shape:", last_x_layers.shape)  # 应输出 torch.Size([4096,x, 4096])
+            # last_token_hidden_states = [layer[:, -1, :] for layer in last_x_layers]  # x个 [1, 4096] 张量
+            # merged_output = torch.stack(last_token_hidden_states, dim=1)  # [1, x, 4096]
 
-                # 2. 对每层取最后一个token的隐藏状态 [:, -1, :]
-                last_token_hidden_states = [layer[:, -1, :] for layer in last_x_layers]  # x个 [1, 4096] 张量
-
-                # 3. 堆叠为 [1, x, 4096]
-                merged_output = torch.stack(last_token_hidden_states, dim=1)  # [1, x, 4096]
-
-                # 验证形状
-                # print("合并后的形状:", merged_output.shape)  # 应输出 torch.Size([1, x, 4096])
+            # print("合并后的形状:", merged_output.shape)  # 应输出 torch.Size([1, x, 4096])
                 
         else:
             outputs = self.model(
@@ -283,17 +320,29 @@ def add_medusa_heads(
             medusa_logits = [self.lm_head(hidden_states)]
         # for i in range(self.medusa_num_heads):
         #     medusa_logits.append(self.medusa_head[i](hidden_states))
-
-        embedded = POS_embedding(out_0,out_0,0.8)
+        embedded = out_0
+        embedded_cat = embedded
         for i in range(self.medusa_num_heads):
-            query = self.proj_layers[i](embedded)
-            SiLued = self.medusa_head[i](merged_output)
-            predicted = self.cross_attn[i](query, SiLued)
+            SiLued = self.medusa_head[i](last_x_layers)
+            predicted = self.cross_attn[i](embedded, SiLued)
             # print("predicted shape:", predicted.shape) #应该输出[1,seq_len,Voacb_size]
             medusa_logits.append(predicted)
-            embedded = POS_embedding(predicted,embedded,0.8)
+            embedded_cat = torch.cat((embedded_cat, predicted), dim=1)
+            embedded_pos = Rotator(embedded_cat.shape[-1], torch.arange(i+2)).rotate(embedded_cat)
+            print("embedded_pos shape:", embedded_pos.shape) #应该输出[seq_len,num_head,32000]
+            embedded = avg_pooling(embedded_pos)
+        print("medusa_logits shape:",torch.stack(medusa_logits, dim=0).transpose(1,2).shape)#应该输出[6,1,seq_len,Vocab_size]
+        return torch.stack(medusa_logits, dim=0).transpose(1,2)
+    
         # print("medusa_logits shape:", torch.stack(medusa_logits, dim=0).shape)#应该输出[medusa_num_heads+1,1,seq_len,Vocab_size]
-        return torch.stack(medusa_logits, dim=0)
+        # if self.training:  # 仅在训练时检查
+        #     for name, param in self.named_parameters():
+        #         if param.requires_grad and "medusa" in name.lower():  # 只检查Medusa相关参数
+        #             if param.grad is None:
+        #                 print(f"[梯度检查] ❌ 参数无梯度: {name}")
+        #             else:
+        #                 grad_norm = param.grad.norm().item()
+        #                 print(f"[梯度检查] ✅ {name}: 梯度范数={grad_norm:.6f}")
     
     self.forward = types.MethodType(forward, self)
 
@@ -449,31 +498,89 @@ def replace_create_optimizer(
         opt_model = self.model_wrapped if is_sagemaker_mp_enabled() else self.model
 
         if self.optimizer is None:
+            # print("啊毒品哈代得到大家")
             decay_parameters = self.get_decay_parameter_names(opt_model)
+            # print("decay_parameters:", decay_parameters)
+            print("\n===== 模型参数列表 =====")
+            for name, param in opt_model.named_parameters():
+                print(f"{name}: shape={tuple(param.shape)}, requires_grad={param.requires_grad}")
             # Separately set lr for medusa_head
             optimizer_grouped_parameters = [
+            # 组1：Medusa相关参数（更高学习率）
                 {
                     "params": [
-                        p for n, p in opt_model.named_parameters() if (n in decay_parameters and p.requires_grad and "medusa_head" not in n)
-                    ],
-                    "weight_decay": self.args.weight_decay,
-                },
-                {
-                    "params": [
-                        p for n, p in opt_model.named_parameters() if (n in decay_parameters and p.requires_grad and "medusa_head" in n)
+                        p for n, p in opt_model.named_parameters()
+                        if (p.requires_grad
+                            and any(k in n for k in ["medusa_head", "cross_attn"]))
                     ],
                     "weight_decay": self.args.weight_decay,
                     "lr": self.args.learning_rate * medusa_lr_multiplier,
                 },
-                
+                # 组2：主干模型参数（需要weight decay）
                 {
                     "params": [
-                        p for n, p in opt_model.named_parameters() if (n not in decay_parameters and p.requires_grad)
+                        p for n, p in opt_model.named_parameters()
+                        if (p.requires_grad
+                            and n in decay_parameters
+                            and not any(k in n for k in ["medusa_head", "cross_attn"]))
+                    ],
+                    "weight_decay": self.args.weight_decay,
+                },
+                # 组3：其他无decay参数（如bias、LayerNorm）
+                {
+                    "params": [
+                        p for n, p in opt_model.named_parameters()
+                        if (p.requires_grad
+                            and n not in decay_parameters
+                            and not any(k in n for k in ["medusa_head", "cross_attn"]))
                     ],
                     "weight_decay": 0.0,
-                },
+                }
             ]
 
+            print("\n===== 修正后的优化器参数分配检查 =====")
+            total_params = set()
+            for i, group in enumerate(optimizer_grouped_parameters):
+                print(f"参数组 {i}: LR={group.get('lr', 'default')}, WD={group['weight_decay']}")
+                print(f"  参数数量: {len(group['params'])}")
+                
+                # 打印前3个参数示例
+                for p in group["params"][:]:
+                    name = [n for n, param in opt_model.named_parameters() if param is p][0]
+                    print(f"  - {name}")
+                    
+                # # 检查重复
+                # for p in group["params"]:
+                #     if p in total_params:
+                #         name = [n for n, param in opt_model.named_parameters() if param is p][0]
+                #         print(f"❌ 参数重复: {name}")
+                #     total_params.add(p)
+
+               # # 将当前组的参数添加到总列表
+               #  all_params_list = []
+               #  all_params_list.extend(group["params"])
+                
+               #  # 检查第40个参数（如果存在）
+               #  if len(all_params_list) > 40:
+               #      param = all_params_list[40]
+               #      name = [n for n, p in opt_model.named_parameters() if p is param][0]
+               #      print(f"\n第40个参数: {name}, shape={tuple(param.shape)}")
+               #  else:
+               #      print(f"\n⚠️ 总参数数量不足40，当前只有 {len(all_params_list)} 个参数")
+
+            print(f"\n总可训练参数: {len(total_params)}")
+            print(f"总模型参数: {sum(p.requires_grad for p in opt_model.parameters())}")
+            
+            # # 检查是否所有参数都被分配
+            # if len(total_params) != sum(p.requires_grad for p in opt_model.parameters()):
+            #     print("❌ 警告：有参数未被分配到任何组！")
+            #     missing_params = [
+            #         n for n, p in opt_model.named_parameters() 
+            #         if p.requires_grad and p not in total_params
+            #     ]
+            #     print(f"未分配的参数: {missing_params[:5]}...")  # 打印前5个
+            # print("✅ 任务完成，程序退出")
+            # sys.exit(0)
             optimizer_cls, optimizer_kwargs = Trainer.get_optimizer_cls_and_kwargs(self.args)
 
             if self.sharded_ddp == ShardedDDPOption.SIMPLE:
@@ -500,7 +607,7 @@ def replace_create_optimizer(
 
         if is_sagemaker_mp_enabled():
             self.optimizer = smp.DistributedOptimizer(self.optimizer)
-
+        
         return self.optimizer
     transformers.trainer.Trainer.create_optimizer = create_optimizer
 
@@ -554,26 +661,39 @@ def replace_create_optimizer(
             opt_model = model
             decay_parameters = self.get_decay_parameter_names(opt_model)
             model_parameters = [
+                # 组1：仅主干模型参数（严格排除所有自定义模块）
                 {
                     "params": [
-                        p for n, p in opt_model.named_parameters() if (n in decay_parameters and p.requires_grad and "medusa_head" not in n)
+                        p for n, p in opt_model.named_parameters()
+                        if (n in decay_parameters 
+                            and p.requires_grad
+                            and "medusa_head" not in n
+                            and "cross_attn" not in n)
                     ],
                     "weight_decay": self.args.weight_decay,
                 },
+                # 组2：Medusa相关参数（包含所有自定义模块）
                 {
                     "params": [
-                        p for n, p in opt_model.named_parameters() if (n in decay_parameters and p.requires_grad and "medusa_head" in n)
+                        p for n, p in opt_model.named_parameters()
+                        if (p.requires_grad
+                            and ("medusa_head" in n 
+                                or "cross_attn" in n))
                     ],
                     "weight_decay": self.args.weight_decay,
                     "lr": self.args.learning_rate * medusa_lr_multiplier,
                 },
-                
+                # 组3：其他无decay参数（排除自定义模块）
                 {
                     "params": [
-                        p for n, p in opt_model.named_parameters() if (n not in decay_parameters and p.requires_grad)
+                        p for n, p in opt_model.named_parameters()
+                        if (n not in decay_parameters 
+                            and p.requires_grad
+                            and "medusa_head" not in n
+                            and "cross_attn" not in n)
                     ],
                     "weight_decay": 0.0,
-                },
+                }
             ]
             
             # list(filter(lambda p: p.requires_grad, model.parameters()))
