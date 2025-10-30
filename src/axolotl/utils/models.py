@@ -591,8 +591,8 @@ def load_model(
             for param in model.model.norm.parameters():
                 param.requires_grad = True
 
-        for param in model.medusa_head.parameters():
-            param.requires_grad = True
+        # for param in model.medusa_head.parameters():
+        #     param.requires_grad = True
 
         for module in [model.medusa_head, model.cross_attn]:
             for param in module.parameters():
