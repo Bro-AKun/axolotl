@@ -320,7 +320,7 @@ def add_medusa_heads(
             medusa_logits = [self.lm_head(hidden_states)]
         # for i in range(self.medusa_num_heads):
         #     medusa_logits.append(self.medusa_head[i](hidden_states))
-        embedded = out_0
+        embedded = out_0.transpose(0,1)
         embedded_cat = embedded
         for i in range(self.medusa_num_heads):
             SiLued = self.medusa_head[i](last_x_layers)
