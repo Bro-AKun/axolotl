@@ -101,7 +101,9 @@ class Rotator:
         cos: [seq_len, D]
         [x, y] @ [[cos, sin], [-sin, cos]] = [x*cos-y*sin, y*cos+x*sin] = [x,y]
         """
-        return x * self.cos + Rotator.reverse_half(x) * self.sin
+        cos = self.cos.to(x.device)
+        sin = self.sin.to(x.device)
+        return x * cos + Rotator.reverse_half(x) * sin
     
     @staticmethod
     def reverse_half(q):
