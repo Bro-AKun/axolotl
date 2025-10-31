@@ -300,7 +300,7 @@ def add_medusa_heads(
             x = 10  
             x_layers = all_layer_outputs[-x:]  # 列表，包含x个 [1, 4096, 4096] 张量
             last_x_layers = torch.cat(x_layers, dim=0).transpose(0, 1)
-            print("last_x_layers shape:", last_x_layers.shape)  # 应输出 torch.Size([4096,x, 4096])
+            # print("last_x_layers shape:", last_x_layers.shape)  # 应输出 torch.Size([4096,x, 4096])
             # last_token_hidden_states = [layer[:, -1, :] for layer in last_x_layers]  # x个 [1, 4096] 张量
             # merged_output = torch.stack(last_token_hidden_states, dim=1)  # [1, x, 4096]
 
@@ -331,9 +331,9 @@ def add_medusa_heads(
             medusa_logits.append(predicted)
             embedded_cat = torch.cat((embedded_cat, predicted), dim=1)
             embedded_pos = Rotator(embedded_cat.shape[-1], torch.arange(i+2)).rotate(embedded_cat)
-            print("embedded_pos shape:", embedded_pos.shape) #应该输出[seq_len,num_head,32000]
+            # print("embedded_pos shape:", embedded_pos.shape) #应该输出[seq_len,num_head,32000]
             embedded = avg_pooling(embedded_pos)
-        print("medusa_logits shape:",torch.stack(medusa_logits, dim=0).transpose(1,2).shape)#应该输出[6,1,seq_len,Vocab_size]
+        # print("medusa_logits shape:",torch.stack(medusa_logits, dim=0).transpose(1,2).shape)#应该输出[6,1,seq_len,Vocab_size]
         return torch.stack(medusa_logits, dim=0).transpose(1,2)
     
         # print("medusa_logits shape:", torch.stack(medusa_logits, dim=0).shape)#应该输出[medusa_num_heads+1,1,seq_len,Vocab_size]
