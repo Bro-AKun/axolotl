@@ -2,79 +2,178 @@ import torch
 import time
 import argparse
 import sys
-from typing import Optional
+import threading
+from typing import List, Dict, Optional
+from concurrent.futures import ThreadPoolExecutor
 
-class GPUMemoryConsumer:
+class MultiGPUMemoryConsumer:
     """
-    GPU显存占用程序
-    可以指定GPU设备、占用显存大小、计算强度等参数
+    多GPU显存占用程序
+    可以同时占用多个GPU设备
     """
     
-    def __init__(self, gpu_id: int = 0, memory_gb: float = 4.0):
+    def __init__(self, gpu_ids: List[int], memory_per_gpu: float = 4.0):
         """
-        初始化GPU占用程序
+        初始化多GPU占用程序
         
         Args:
-            gpu_id: 要占用的GPU设备ID
-            memory_gb: 要占用的显存大小（GB）
+            gpu_ids: 要占用的GPU设备ID列表，如 [0, 1, 2]
+            memory_per_gpu: 每个GPU要占用的显存大小（GB）
         """
-        self.gpu_id = gpu_id
-        self.memory_gb = memory_gb
-        self.device = None
-        self.memory_tensors = []
+        self.gpu_ids = gpu_ids
+        self.memory_per_gpu = memory_per_gpu
+        self.consumers = {}
         
         # 检查GPU可用性
         self._check_gpu_availability()
         
     def _check_gpu_availability(self):
-        """检查GPU是否可用"""
+        """检查所有GPU是否可用"""
         if not torch.cuda.is_available():
             print("❌ CUDA不可用，无法使用GPU")
             sys.exit(1)
             
-        if self.gpu_id >= torch.cuda.device_count():
-            print(f"❌ GPU {self.gpu_id} 不存在，可用GPU: 0-{torch.cuda.device_count()-1}")
-            sys.exit(1)
+        available_gpus = list(range(torch.cuda.device_count()))
+        print(f"✅ 可用GPU: {available_gpus}")
+        
+        for gpu_id in self.gpu_ids:
+            if gpu_id not in available_gpus:
+                print(f"❌ GPU {gpu_id} 不存在，可用GPU: {available_gpus}")
+                sys.exit(1)
+                
+        print(f"🎯 将占用GPU: {self.gpu_ids}")
+        
+    def occupy_all_gpus(self):
+        """同时占用所有指定的GPU"""
+        print(f"🚀 开始同时占用 {len(self.gpu_ids)} 个GPU...")
+        
+        # 使用线程池并行占用
+        with ThreadPoolExecutor(max_workers=len(self.gpu_ids)) as executor:
+            futures = []
+            for gpu_id in self.gpu_ids:
+                future = executor.submit(self._occupy_single_gpu, gpu_id)
+                futures.append(future)
             
-        self.device = torch.device(f'cuda:{self.gpu_id}')
-        print(f"✅ 使用GPU {self.gpu_id}: {torch.cuda.get_device_name(self.gpu_id)}")
+            # 等待所有任务完成
+            for future in futures:
+                future.result()
         
+        print("✅ 所有GPU占用完成")
+    
+    def _occupy_single_gpu(self, gpu_id: int):
+        """占用单个GPU"""
+        try:
+            # 为每个GPU创建独立的consumer
+            consumer = SingleGPUConsumer(gpu_id, self.memory_per_gpu)
+            consumer.occupy_memory()
+            self.consumers[gpu_id] = consumer
+            print(f"✅ GPU {gpu_id} 占用成功")
+            
+        except Exception as e:
+            print(f"❌ GPU {gpu_id} 占用失败: {e}")
+    
+    def heavy_computation_all_gpus(self, computation_time: int = 60):
+        """在所有GPU上执行大量计算"""
+        print(f"🔥 在所有 {len(self.gpu_ids)} 个GPU上执行计算，持续 {computation_time} 秒...")
+        
+        threads = []
+        for gpu_id, consumer in self.consumers.items():
+            thread = threading.Thread(
+                target=consumer.heavy_computation,
+                args=(computation_time,)
+            )
+            thread.start()
+            threads.append(thread)
+            print(f"▶️  GPU {gpu_id} 计算线程启动")
+        
+        # 等待所有线程完成
+        for thread in threads:
+            thread.join()
+    
+    def matrix_operations_all_gpus(self, matrix_size: int = 4096, operations: int = 1000):
+        """在所有GPU上执行矩阵运算"""
+        print(f"🧮 在所有GPU上执行 {operations} 次 {matrix_size}x{matrix_size} 矩阵运算...")
+        
+        threads = []
+        for gpu_id, consumer in self.consumers.items():
+            thread = threading.Thread(
+                target=consumer.matrix_operations,
+                args=(matrix_size, operations)
+            )
+            thread.start()
+            threads.append(thread)
+        
+        for thread in threads:
+            thread.join()
+    
+    def monitor_all_gpus(self, monitor_interval: int = 5):
+        """监控所有GPU使用情况"""
+        print(f"\n📊 监控所有 {len(self.gpu_ids)} 个GPU使用情况 (Ctrl+C停止):")
+        print("=" * 60)
+        
+        try:
+            while True:
+                gpu_status = []
+                for gpu_id in self.gpu_ids:
+                    if gpu_id in self.consumers:
+                        consumer = self.consumers[gpu_id]
+                        allocated = torch.cuda.memory_allocated(consumer.device) / (1024**3)
+                        utilization = torch.cuda.utilization(gpu_id)
+                        gpu_status.append(f"GPU{gpu_id}: {allocated:.1f}GB/{utilization}%")
+                
+                status_str = " | ".join(gpu_status)
+                print(f"📈 {status_str}")
+                time.sleep(monitor_interval)
+                
+        except KeyboardInterrupt:
+            print("\n⏹️  停止监控")
+    
+    def cleanup_all_gpus(self):
+        """清理所有GPU显存"""
+        print("🧹 清理所有GPU显存...")
+        for gpu_id, consumer in self.consumers.items():
+            try:
+                consumer.cleanup()
+                print(f"✅ GPU {gpu_id} 清理完成")
+            except Exception as e:
+                print(f"❌ GPU {gpu_id} 清理失败: {e}")
+
+class SingleGPUConsumer:
+    """
+    单个GPU占用器
+    """
+    
+    def __init__(self, gpu_id: int, memory_gb: float = 4.0):
+        self.gpu_id = gpu_id
+        self.memory_gb = memory_gb
+        self.device = torch.device(f'cuda:{gpu_id}')
+        self.memory_tensors = []
+    
     def occupy_memory(self, memory_gb: Optional[float] = None):
-        """
-        占用指定大小的显存
-        
-        Args:
-            memory_gb: 显存大小（GB），如果为None则使用初始化值
-        """
+        """占用显存"""
         if memory_gb is not None:
             self.memory_gb = memory_gb
             
-        # 计算需要分配的元素数量（float32，每个4字节）
-        bytes_needed = int(self.memory_gb * 1024 * 1024 * 1024)  # 转换为字节
-        elements_needed = bytes_needed // 4  # float32每个元素4字节
+        bytes_needed = int(self.memory_gb * 1024 * 1024 * 1024)
+        elements_needed = bytes_needed // 4
         
-        print(f"🔄 正在分配 {self.memory_gb} GB 显存...")
+        print(f"🔄 GPU {self.gpu_id}: 正在分配 {self.memory_gb} GB 显存...")
         
         try:
-            # 分配大张量来占用显存
             tensor = torch.randn(elements_needed, dtype=torch.float32, device=self.device)
             self.memory_tensors.append(tensor)
-            
-            # 确保张量被实际分配（防止延迟分配）
             torch.cuda.synchronize(self.device)
             
-            # 获取实际占用显存
-            allocated = torch.cuda.memory_allocated(self.device) / (1024**3)  # 转换为GB
-            print(f"✅ 成功分配 {allocated:.2f} GB 显存")
+            allocated = torch.cuda.memory_allocated(self.device) / (1024**3)
+            print(f"✅ GPU {self.gpu_id}: 成功分配 {allocated:.2f} GB 显存")
             
         except RuntimeError as e:
-            print(f"❌ 显存分配失败: {e}")
-            # 尝试分配较小的块
+            print(f"❌ GPU {self.gpu_id}: 显存分配失败: {e}")
             self._allocate_in_chunks(elements_needed)
     
     def _allocate_in_chunks(self, total_elements: int):
-        """分块分配显存（当一次性分配失败时使用）"""
-        chunk_size = total_elements // 10  # 分成10块
+        """分块分配显存"""
+        chunk_size = total_elements // 10
         allocated_elements = 0
         
         while allocated_elements < total_elements:
@@ -88,202 +187,146 @@ class GPUMemoryConsumer:
                 allocated_elements += current_chunk
                 
                 allocated_gb = (allocated_elements * 4) / (1024**3)
-                print(f"📦 已分配: {allocated_gb:.2f} GB")
+                print(f"📦 GPU {self.gpu_id}: 已分配 {allocated_gb:.2f} GB")
                 
             except RuntimeError:
-                print("⚠️  无法分配更多显存，可能已满")
+                print(f"⚠️  GPU {self.gpu_id}: 无法分配更多显存")
                 break
         
         total_allocated = (allocated_elements * 4) / (1024**3)
-        print(f"🎯 最终分配: {total_allocated:.2f} GB")
+        print(f"🎯 GPU {self.gpu_id}: 最终分配 {total_allocated:.2f} GB")
     
     def heavy_computation(self, computation_time: int = 60, batch_size: int = 1024):
-        """
-        执行大量计算来保持GPU活跃
+        """执行大量计算"""
+        print(f"🔥 GPU {self.gpu_id}: 开始计算，持续 {computation_time} 秒...")
         
-        Args:
-            computation_time: 计算持续时间（秒）
-            batch_size: 批量大小
-        """
-        print(f"🔥 开始执行大量计算，持续 {computation_time} 秒...")
-        
-        # 创建用于计算的张量
         if not self.memory_tensors:
-            print("⚠️  没有可用的显存张量，先分配一些显存")
-            self.occupy_memory(1.0)  # 分配1GB用于计算
+            self.occupy_memory(1.0)
         
-        # 使用部分已分配的显存进行计算
         compute_tensor = self.memory_tensors[0][:batch_size * 1000].view(batch_size, -1)
         
         start_time = time.time()
         iteration = 0
         
         while time.time() - start_time < computation_time:
-            # 执行密集矩阵运算
             a = torch.randn(batch_size, batch_size, device=self.device)
             b = torch.randn(batch_size, batch_size, device=self.device)
-            
-            # 矩阵乘法（计算密集型）
             c = torch.matmul(a, b)
-            
-            # 激活函数计算
             d = torch.nn.functional.relu(c)
-            
-            # 更多的计算操作
             e = torch.nn.functional.softmax(d, dim=1)
             f = torch.nn.functional.log_softmax(e, dim=1)
             
-            # 确保计算完成
             torch.cuda.synchronize(self.device)
             
             iteration += 1
             if iteration % 100 == 0:
                 elapsed = time.time() - start_time
-                print(f"🔄 已计算 {iteration} 次迭代，用时 {elapsed:.1f} 秒")
+                print(f"🔄 GPU {self.gpu_id}: {iteration} 次迭代，用时 {elapsed:.1f} 秒")
     
     def matrix_operations(self, matrix_size: int = 4096, operations: int = 1000):
-        """
-        执行大规模矩阵运算
+        """执行矩阵运算"""
+        print(f"🧮 GPU {self.gpu_id}: 执行 {operations} 次 {matrix_size}x{matrix_size} 矩阵运算...")
         
-        Args:
-            matrix_size: 矩阵大小 (n x n)
-            operations: 操作次数
-        """
-        print(f"🧮 执行 {operations} 次 {matrix_size}x{matrix_size} 矩阵运算...")
-        
-        # 创建大矩阵
         a = torch.randn(matrix_size, matrix_size, device=self.device)
         b = torch.randn(matrix_size, matrix_size, device=self.device)
         
         for i in range(operations):
-            # 各种矩阵运算
-            c = torch.matmul(a, b)                    # 矩阵乘法
-            d = torch.inverse(c)                      # 矩阵求逆（计算量很大）
-            e = torch.eig(c)                          # 特征值计算
-            f = torch.svd(c)                          # 奇异值分解
+            c = torch.matmul(a, b)
+            d = torch.inverse(c)
+            e = torch.eig(c)
+            f = torch.svd(c)
             
             if i % 100 == 0:
-                print(f"📊 已完成 {i}/{operations} 次矩阵运算")
+                print(f"📊 GPU {self.gpu_id}: 完成 {i}/{operations} 次运算")
         
-        print("✅ 矩阵运算完成")
-    
-    def neural_network_simulation(self, layers: int = 10, hidden_size: int = 2048):
-        """
-        模拟神经网络前向传播（计算密集型）
-        
-        Args:
-            layers: 网络层数
-            hidden_size: 隐藏层大小
-        """
-        print(f"🧠 模拟 {layers} 层神经网络，隐藏层大小 {hidden_size}...")
-        
-        # 创建模拟的网络权重
-        weights = []
-        biases = []
-        
-        # 输入层
-        input_size = 1024
-        current_size = input_size
-        
-        for i in range(layers):
-            # 创建权重矩阵
-            w = torch.randn(hidden_size, current_size, device=self.device)
-            b = torch.randn(hidden_size, device=self.device)
-            weights.append(w)
-            biases.append(b)
-            current_size = hidden_size
-        
-        # 输出层
-        output_weight = torch.randn(10, current_size, device=self.device)
-        output_bias = torch.randn(10, device=self.device)
-        
-        # 模拟前向传播
-        batch_size = 512
-        x = torch.randn(batch_size, input_size, device=self.device)
-        
-        for i, (w, b) in enumerate(zip(weights, biases)):
-            x = torch.matmul(x, w.t()) + b
-            x = torch.nn.functional.relu(x)  # ReLU激活
-            
-            if i % 3 == 0:  # 每3层添加归一化
-                x = torch.nn.functional.layer_norm(x, (hidden_size,))
-        
-        # 输出层
-        output = torch.matmul(x, output_weight.t()) + output_bias
-        output = torch.nn.functional.softmax(output, dim=1)
-        
-        print("✅ 神经网络模拟完成")
-    
-    def monitor_gpu_usage(self, monitor_interval: int = 5):
-        """监控GPU使用情况"""
-        print("\n📊 GPU使用情况监控（Ctrl+C停止）:")
-        print("=" * 50)
-        
-        try:
-            while True:
-                allocated = torch.cuda.memory_allocated(self.device) / (1024**3)
-                cached = torch.cuda.memory_reserved(self.device) / (1024**3)
-                utilization = torch.cuda.utilization(self.gpu_id)
-                
-                print(f"已分配: {allocated:.2f}GB | 缓存: {cached:.2f}GB | 利用率: {utilization}%")
-                time.sleep(monitor_interval)
-                
-        except KeyboardInterrupt:
-            print("\n⏹️  停止监控")
+        print(f"✅ GPU {self.gpu_id}: 矩阵运算完成")
     
     def cleanup(self):
         """清理显存"""
-        print("🧹 清理显存...")
         self.memory_tensors.clear()
         torch.cuda.empty_cache()
-        
         allocated = torch.cuda.memory_allocated(self.device) / (1024**3)
-        print(f"✅ 清理完成，剩余显存: {allocated:.2f} GB")
+        print(f"🧹 GPU {self.gpu_id}: 清理完成，剩余 {allocated:.2f} GB")
 
 def main():
     """主函数"""
-    parser = argparse.ArgumentParser(description='GPU显存占用和计算程序')
-    parser.add_argument('--gpu', type=int, default=0, help='GPU设备ID (默认: 0)')
-    parser.add_argument('--memory', type=float, default=50.0, help='占用显存大小(GB) (默认: 4.0)')
-    parser.add_argument('--time', type=int, default=300, help='计算持续时间(秒) (默认: 300)')
-    parser.add_argument('--computation', type=str, choices=['matrix', 'nn', 'mixed'], 
+    parser = argparse.ArgumentParser(description='多GPU显存占用程序')
+    parser.add_argument('--gpus', type=str, required=True, 
+                       help='要占用的GPU ID列表，用逗号分隔，如: 0,1,2 或 0-3')
+    parser.add_argument('--memory', type=float, default=4.0, 
+                       help='每个GPU占用显存大小(GB) (默认: 4.0)')
+    parser.add_argument('--time', type=int, default=300, 
+                       help='计算持续时间(秒) (默认: 300)')
+    parser.add_argument('--computation', type=str, choices=['matrix', 'mixed'], 
                        default='mixed', help='计算类型 (默认: mixed)')
     
     args = parser.parse_args()
     
-    # 创建GPU占用器
-    consumer = GPUMemoryConsumer(gpu_id=args.gpu, memory_gb=args.memory)
+    # 解析GPU ID列表
+    gpu_ids = parse_gpu_ids(args.gpus)
+    
+    if not gpu_ids:
+        print("❌ 无效的GPU ID格式")
+        print("✅ 正确格式示例:")
+        print("   --gpus 0,1,2     # 占用GPU 0,1,2")
+        print("   --gpus 0-3       # 占用GPU 0,1,2,3") 
+        print("   --gpus 0,2,4     # 占用GPU 0,2,4")
+        sys.exit(1)
+    
+    # 创建多GPU占用器
+    consumer = MultiGPUMemoryConsumer(gpu_ids, args.memory)
     
     try:
-        # 1. 占用显存
-        consumer.occupy_memory()
+        # 1. 占用所有GPU显存
+        consumer.occupy_all_gpus()
         
         # 2. 执行计算
         if args.computation == 'matrix':
-            consumer.matrix_operations(matrix_size=4096, operations=1000)
-        elif args.computation == 'nn':
-            consumer.neural_network_simulation(layers=20, hidden_size=4096)
-        else:  # mixed
-            consumer.heavy_computation(computation_time=args.time)
+            consumer.matrix_operations_all_gpus(matrix_size=4096, operations=1000)
+        else:
+            consumer.heavy_computation_all_gpus(computation_time=args.time)
         
-        # 3. 显示监控信息（可选）
-        print("\n当前GPU状态:")
-        print(f"设备: GPU {args.gpu}")
-        print(f"名称: {torch.cuda.get_device_name(args.gpu)}")
-        print(f"总显存: {torch.cuda.get_device_properties(args.gpu).total_memory / (1024**3):.1f} GB")
+        # 3. 显示系统信息
+        print("\n" + "="*50)
+        print("🎯 系统GPU状态汇总:")
+        print("="*50)
+        for i in range(torch.cuda.device_count()):
+            props = torch.cuda.get_device_properties(i)
+            total_memory = props.total_memory / (1024**3)
+            print(f"GPU {i}: {props.name} | 总显存: {total_memory:.1f} GB")
         
-        # 保持程序运行
-        print(f"\n🔄 程序将持续运行，占用GPU {args.gpu}...")
+        # 4. 持续监控
+        print(f"\n🔄 程序持续运行，占用GPU: {gpu_ids}")
         print("按 Ctrl+C 退出程序")
-        
-        # 持续监控
-        consumer.monitor_gpu_usage()
+        consumer.monitor_all_gpus()
         
     except KeyboardInterrupt:
         print("\n⏹️  用户中断程序")
     finally:
-        # 清理资源
-        consumer.cleanup()
+        consumer.cleanup_all_gpus()
+
+def parse_gpu_ids(gpu_str: str) -> List[int]:
+    """解析GPU ID字符串"""
+    gpu_ids = []
+    
+    try:
+        # 处理范围格式: 0-3
+        if '-' in gpu_str:
+            start, end = map(int, gpu_str.split('-'))
+            gpu_ids = list(range(start, end + 1))
+        # 处理列表格式: 0,1,2
+        elif ',' in gpu_str:
+            gpu_ids = [int(x.strip()) for x in gpu_str.split(',')]
+        # 处理单个GPU: 0
+        else:
+            gpu_ids = [int(gpu_str)]
+        
+        # 去重并排序
+        gpu_ids = sorted(set(gpu_ids))
+        return gpu_ids
+        
+    except ValueError:
+        return []
 
 if __name__ == "__main__":
     main()
