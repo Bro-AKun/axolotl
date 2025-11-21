@@ -508,16 +508,6 @@ def replace_create_optimizer(
                 print(f"{name}: shape={tuple(param.shape)}, requires_grad={param.requires_grad}")
             # Separately set lr for medusa_head
             optimizer_grouped_parameters = [
-            # 组1：Medusa相关参数（更高学习率）
-                {
-                    "params": [
-                        p for n, p in opt_model.named_parameters()
-                        if (p.requires_grad
-                            and any(k in n for k in ["medusa_head", "cross_attn"]))
-                    ],
-                    "weight_decay": self.args.weight_decay,
-                    "lr": self.args.learning_rate * medusa_lr_multiplier,
-                },
                 # 组2：主干模型参数（需要weight decay）
                 {
                     "params": [
@@ -527,6 +517,16 @@ def replace_create_optimizer(
                             and not any(k in n for k in ["medusa_head", "cross_attn"]))
                     ],
                     "weight_decay": self.args.weight_decay,
+                },
+                # 组1：Medusa相关参数（更高学习率）
+                {
+                    "params": [
+                        p for n, p in opt_model.named_parameters()
+                        if (p.requires_grad
+                            and any(k in n for k in ["medusa_head", "cross_attn"]))
+                    ],
+                    "weight_decay": self.args.weight_decay,
+                    "lr": self.args.learning_rate * medusa_lr_multiplier,
                 },
                 # 组3：其他无decay参数（如bias、LayerNorm）
                 {
