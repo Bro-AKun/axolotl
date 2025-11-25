@@ -1,12 +1,12 @@
 # torch
-#--extra-index-url https://download.pytorch.org/whl/cu124
-#torch==2.6.0
-#torchvision==0.21.0
-#torchaudio==2.6.0
---extra-index-url https://download.pytorch.org/whl/cu126
-torch==2.9.0
-torchvision==0.24.0
-torchaudio==2.9.0
+--extra-index-url https://download.pytorch.org/whl/cu124
+torch==2.6.0
+torchvision==0.21.0
+torchaudio==2.6.0
+#--extra-index-url https://download.pytorch.org/whl/cu126
+#torch==2.9.0
+#torchvision==0.24.0
+#torchaudio==2.9.0
 auto-gptq
 packaging
 #peft @ git+https://github.com/huggingface/peft.git
