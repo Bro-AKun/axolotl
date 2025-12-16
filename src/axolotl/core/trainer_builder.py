@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
 from typing import Optional, Union
-
+import ipdb
 import torch
 import transformers
 from datasets import Dataset
@@ -21,7 +21,7 @@ from torch.optim.lr_scheduler import OneCycleLR
 from torch.utils.data import DataLoader, DistributedSampler, SequentialSampler
 from transformers import EarlyStoppingCallback, Trainer, TrainingArguments
 from transformers.trainer_pt_utils import SequentialDistributedSampler
-
+from transformers import AutoTokenizer
 from axolotl.monkeypatch.relora import ReLoRACallback, ReLoRAScheduler
 from axolotl.utils.callbacks import (
     EvalFirstStepCallback,
@@ -34,6 +34,198 @@ from axolotl.utils.callbacks import (
 from axolotl.utils.collators import DataCollatorForSeq2Seq
 from axolotl.utils.dataloader import MultipackDistributedDataloader
 from axolotl.utils.schedulers import get_cosine_schedule_with_quadratic_warmup
+from collections import defaultdict
+import numpy as np
+def analyze_gradient_health_fixed(model, 
+                                 threshold_low=1e-8,     # 梯度消失阈值
+                                 threshold_high=1e2,     # 梯度爆炸阈值（调低了！）
+                                 nan_inf_threshold=0.1,  # NaN/Inf比例阈值
+                                 verbose=True,
+                                 layer_stats=True,
+                                 param_details=False,
+                                 per_element_norm=True):  # 新增：按元素计算梯度大小
+    """
+    修复版梯度健康度分析：避免大参数矩阵范数计算误差
+    
+    修改点：
+    1. 不直接使用整体L2范数，而是使用平均梯度大小
+    2. 添加相对梯度检查
+    3. 优化大参数处理
+    """
+    
+    print("🔍 模型梯度健康度分析（修复版）")
+    print("=" * 60)
+    
+    stats = {
+        'total_params': 0,
+        'trainable_params': 0,
+        'params_with_grad': 0,
+        'params_no_grad': 0,
+        'params_healthy': 0,
+        'params_vanished': 0,
+        'params_exploded': 0,
+        'params_nan': 0,
+        'params_inf': 0,
+        'grad_avg_magnitudes': [],  # 改为平均梯度大小
+        'grad_abs_means': [],       # 梯度绝对值均值
+        'grad_maxs': [],
+        'grad_mins': [],
+        'layer_stats': defaultdict(lambda: {
+            'total': 0, 'healthy': 0, 'vanished': 0, 
+            'exploded': 0, 'nan': 0, 'inf': 0
+        }),
+        'problematic_layers': [],
+        'max_grad_abs_mean': 0.0,
+        'min_grad_abs_mean': float('inf'),
+        'median_grad_abs_mean': 0.0,
+        'mean_grad_abs_mean': 0.0,
+    }
+    
+    for name, param in model.named_parameters():
+        if not param.requires_grad:
+            continue
+            
+        param_count = param.numel()
+        stats['total_params'] += param_count
+        stats['trainable_params'] += param_count
+        
+        # 获取层名
+        if '.' in name:
+            layer_name = '.'.join(name.split('.')[:-1])
+        else:
+            layer_name = 'root'
+        
+        if param.grad is not None:
+            stats['params_with_grad'] += param_count
+            grad = param.grad
+            
+            # 检查NaN和Inf
+            nan_mask = torch.isnan(grad)
+            inf_mask = torch.isinf(grad)
+            nan_count = torch.sum(nan_mask).item()
+            inf_count = torch.sum(inf_mask).item()
+            has_nan = nan_count > 0
+            has_inf = inf_count > 0
+            
+            # 移除NaN/Inf
+            if has_nan or has_inf:
+                # 创建有效掩码
+                valid_mask = ~(nan_mask | inf_mask)
+                valid_grad = grad[valid_mask]
+                if valid_grad.numel() == 0:
+                    # 全是NaN/Inf
+                    stats['params_nan'] += nan_count
+                    stats['params_inf'] += inf_count
+                    stats['layer_stats'][layer_name]['nan'] += nan_count
+                    stats['layer_stats'][layer_name]['inf'] += inf_count
+                    continue
+            else:
+                valid_grad = grad
+            
+            # 关键修改：不直接用L2范数，而是用平均梯度大小
+            if per_element_norm:
+                # 方法1：计算平均梯度大小（对每个元素独立评估）
+                grad_abs_mean = torch.mean(torch.abs(valid_grad)).item()
+                grad_max = torch.max(torch.abs(valid_grad)).item()
+                grad_min = torch.min(torch.abs(valid_grad)).item()
+            else:
+                # 方法2：如果必须用范数，用相对范数
+                grad_norm = torch.norm(valid_grad, p=2).item()
+                # 除以sqrt(param_count)得到每个元素的平均贡献
+                grad_abs_mean = grad_norm / math.sqrt(param_count)
+                grad_max = torch.max(torch.abs(valid_grad)).item()
+                grad_min = torch.min(torch.abs(valid_grad)).item()
+            
+            # 记录统计
+            stats['grad_avg_magnitudes'].append(grad_abs_mean)
+            stats['grad_maxs'].append(grad_max)
+            stats['grad_mins'].append(grad_min)
+            
+            # 判断梯度状态（基于每个元素的平均梯度大小）
+            if has_nan or has_inf:
+                status = "💀"
+                if has_nan:
+                    stats['params_nan'] += nan_count
+                    stats['layer_stats'][layer_name]['nan'] += nan_count
+                if has_inf:
+                    stats['params_inf'] += inf_count
+                    stats['layer_stats'][layer_name]['inf'] += inf_count
+            elif grad_abs_mean < threshold_low:
+                status = "❄️"  # 梯度消失
+                stats['params_vanished'] += param_count
+                stats['layer_stats'][layer_name]['vanished'] += param_count
+            elif grad_abs_mean > threshold_high:
+                status = "💥"  # 梯度爆炸
+                stats['params_exploded'] += param_count
+                stats['layer_stats'][layer_name]['exploded'] += param_count
+            else:
+                status = "✅"  # 梯度正常
+                stats['params_healthy'] += param_count
+                stats['layer_stats'][layer_name]['healthy'] += param_count
+            
+            # 更新统计
+            stats['max_grad_abs_mean'] = max(stats['max_grad_abs_mean'], grad_abs_mean)
+            stats['min_grad_abs_mean'] = min(stats['min_grad_abs_mean'], grad_abs_mean)
+            
+            stats['layer_stats'][layer_name]['total'] += param_count
+            
+            if param_details and verbose:
+                print(f"{status} {name:40} | "
+                      f"形状: {str(param.shape):<15} | "
+                      f"平均梯度大小: {grad_abs_mean:.2e} | "
+                      f"[{grad_min:.2e}, {grad_max:.2e}] | "
+                      f"NaN: {nan_count}/{param_count} | "
+                      f"Inf: {inf_count}/{param_count}")
+        else:
+            stats['params_no_grad'] += param_count
+            stats['layer_stats'][layer_name]['total'] += param_count
+            if param_details and verbose:
+                print(f"❌ {name:40} | 形状: {str(param.shape):<15} | 梯度: None")
+    
+    # 计算统计
+    if stats['grad_avg_magnitudes']:
+        stats['mean_grad_abs_mean'] = np.mean(stats['grad_avg_magnitudes'])
+        stats['median_grad_abs_mean'] = np.median(stats['grad_avg_magnitudes'])
+    
+    # 计算比例
+    if stats['trainable_params'] > 0:
+        stats['healthy_ratio'] = stats['params_healthy'] / stats['trainable_params']
+        stats['vanished_ratio'] = stats['params_vanished'] / stats['trainable_params']
+        stats['exploded_ratio'] = stats['params_exploded'] / stats['trainable_params']
+        stats['nan_ratio'] = stats['params_nan'] / stats['trainable_params']
+        stats['inf_ratio'] = stats['params_inf'] / stats['trainable_params']
+        stats['has_grad_ratio'] = stats['params_with_grad'] / stats['trainable_params']
+    else:
+        stats['healthy_ratio'] = 0.0
+        stats['vanished_ratio'] = 0.0
+        stats['exploded_ratio'] = 0.0
+        stats['nan_ratio'] = 0.0
+        stats['inf_ratio'] = 0.0
+        stats['has_grad_ratio'] = 0.0
+    
+    # 打印汇总
+    if verbose:
+        print(f"\n📊 梯度分析汇总（修复版）")
+        print("=" * 60)
+        print(f"总参数数: {stats['total_params']:,}")
+        print(f"可训练参数: {stats['trainable_params']:,}")
+        print(f"有梯度参数: {stats['params_with_grad']:,} ({stats['has_grad_ratio']:.1%})")
+        print(f"梯度正常参数: {stats['params_healthy']:,} ({stats['healthy_ratio']:.1%})")
+        print(f"梯度消失参数: {stats['params_vanished']:,} ({stats['vanished_ratio']:.1%})")
+        print(f"梯度爆炸参数: {stats['params_exploded']:,} ({stats['exploded_ratio']:.1%})")
+        print(f"NaN梯度参数: {stats['params_nan']:,} ({stats['nan_ratio']:.1%})")
+        print(f"Inf梯度参数: {stats['params_inf']:,} ({stats['inf_ratio']:.1%})")
+        
+        if stats['grad_avg_magnitudes']:
+            print(f"\n📈 梯度大小统计（每个参数的平均梯度）")
+            print(f"最大平均梯度: {stats['max_grad_abs_mean']:.2e}")
+            print(f"最小平均梯度: {stats['min_grad_abs_mean']:.2e}")
+            print(f"平均梯度大小: {stats['mean_grad_abs_mean']:.2e}")
+            print(f"中位梯度大小: {stats['median_grad_abs_mean']:.2e}")
+            print(f"正常范围: [{threshold_low:.0e}, {threshold_high:.0e}]")
+    
+    return stats
+
 
 try:
     import torch._dynamo  # pylint: disable=ungrouped-imports
@@ -110,10 +302,17 @@ class AxolotlTrainer(Trainer):
     """
 
     args = None  # type: AxolotlTrainingArguments
-
+    
     def __init__(self, *args, num_epochs=1, bench_data_collator=None, **kwargs):
         self.num_epochs = num_epochs
         self.bench_data_collator = bench_data_collator
+        tokenizer_cls = getattr(transformers, 'LlamaTokenizer')
+        self.tokenizer = tokenizer_cls.from_pretrained(
+            '/mnt/zyk/Medusa/vicuna-7b-v1.5',
+            trust_remote_code=None or False,
+            use_fast=True,
+    )
+
         super().__init__(*args, **kwargs)
 
     def create_scheduler(
@@ -237,15 +436,52 @@ class AxolotlTrainer(Trainer):
         return DataLoader(bench_dataset, **dataloader_params)
         # return self.accelerator.prepare(DataLoader(bench_dataset, **dataloader_params))
 
-    def compute_loss(self, model, inputs, return_outputs=False):
+    def compute_loss(self, model, inputs,tokenizer,return_outputs=False):
         # use one's weighted cross entropy loss calc
         # if self.args.sample_packing:
         #     labels = inputs.pop("labels")
         #     outputs = model(**inputs)
         #     loss = trainer_weighted_loss(outputs, labels, shift_labels=True)
         #     return (loss, outputs) if return_outputs else loss
-        return super().compute_loss(model, inputs, return_outputs=return_outputs)
+        return super().compute_loss(model, inputs,tokenizer,return_outputs=return_outputs)
 
+    def training_step(self, model, inputs) -> torch.Tensor:
+        """
+        Perform a training step on a batch of inputs.
+
+        Subclass and override to inject custom behavior.
+
+        Args:
+            model (`nn.Module`):
+                The model to train.
+            inputs (`Dict[str, Union[torch.Tensor, Any]]`):
+                The inputs and targets of the model.
+
+                The dictionary will be unpacked before being fed to the model. Most models expect the targets under the
+                argument `labels`. Check your model's documentation for all accepted arguments.
+
+        Return:
+            `torch.Tensor`: The tensor with training loss on this batch.
+        """
+        model.train()
+        inputs = self._prepare_inputs(inputs)
+
+        with self.compute_loss_context_manager():
+            loss = self.compute_loss(model, inputs,self.tokenizer_1)
+
+        if self.args.n_gpu > 1:
+            loss = loss.mean()  # mean() to average on multi-gpu parallel training
+
+        if self.do_grad_scaling:
+            self.scaler.scale(loss).backward()
+        elif self.use_apex:
+            # with amp.scale_loss(loss, self.optimizer) as scaled_loss:
+            #     scaled_loss.backward()
+            raise NotImplementedError("Apex is no longer supported")
+        else:
+            self.accelerator.backward(loss)
+        analyze_gradient_health_fixed(self.model)
+        return loss.detach() / self.args.gradient_accumulation_steps
 
 class OneCycleLRSchedulerTrainer(AxolotlTrainer):
     """
@@ -635,7 +871,7 @@ class HFCausalTrainerBuilder(TrainerBuilderBase):
             if Path(self.cfg.torchdistx_path).exists():
                 sys.path.append(self.cfg.torchdistx_path)
                 importlib.import_module("torchdistx")
-
+        
         data_collator_kwargs = {
             "padding": True,  # True/"longest" is the default
         }

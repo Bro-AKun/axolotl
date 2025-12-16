@@ -4,7 +4,7 @@ import hashlib
 import logging
 from pathlib import Path
 from typing import Any, Dict, List, Tuple, Union
-
+import ipdb
 import torch
 from datasets import (
     Dataset,
@@ -78,6 +78,7 @@ def prepare_dataset(cfg, tokenizer):
         train_dataset, eval_dataset = process_datasets_for_packing(
             cfg, train_dataset, eval_dataset, tokenizer
         )
+    
     if cfg.max_steps:
         total_num_steps = min(
             calculate_total_num_steps(cfg, train_dataset, tokenizer), cfg.max_steps
@@ -235,6 +236,9 @@ def load_tokenized_prepared_datasets(
                     streaming=False,
                     split=None,
                 )
+            # ipdb.set_trace()
+            # ds = ds['train'].select(range(50))
+            ds = ds['train']
             if not ds:
                 raise ValueError("unhandled dataset load")
             # support for using a subset of the data

@@ -7,7 +7,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
-
+import ipdb
 import torch
 import transformers.modelcard
 from datasets import Dataset
@@ -28,6 +28,38 @@ sys.path.insert(0, src_dir)
 configure_logging()
 LOG = logging.getLogger("axolotl.train")
 
+def save_structured_weights(model, save_path="/mnt/zyk/Medusa/axolotl/weight/model_weights.pt"):
+    """
+    保存结构化的权重文件
+    """
+    import torch
+    
+    weights = {
+        'medusa_head': {},
+        'cross_attn': {},
+        'rmsnorm': None,
+        'metadata': {
+            'model_type': type(model).__name__,
+        }
+    }
+    
+    # 保存 medusa_head
+    for i, head in enumerate(model.medusa_head):
+        weights['medusa_head'][f'head_{i}'] = head.state_dict()
+    
+    # 保存 cross_attn
+    for i, attn in enumerate(model.cross_attn):
+        weights['cross_attn'][f'attn_{i}'] = attn.state_dict()
+    
+    # 保存 norm
+    weights['rmsnorm'] = model.rmsnorm.state_dict()
+    
+    # 保存完整的权重文件
+    torch.save(weights, save_path)
+    print(f"✅ 结构化权重已保存到: {save_path}")
+    
+    return save_path
+
 
 @dataclass
 class TrainDatasetMeta:
@@ -38,7 +70,6 @@ class TrainDatasetMeta:
     train_dataset: Dataset
     eval_dataset: Optional[Dataset] = None
     total_num_steps: Optional[int] = None
-
 
 def train(
     *, cfg: DictDefault, cli_args: TrainerCliArgs, dataset_meta: TrainDatasetMeta
@@ -124,10 +155,12 @@ def train(
             trainer.train(resume_from_checkpoint=resume_from_checkpoint)
     else:
         trainer.train(resume_from_checkpoint=resume_from_checkpoint)
+    # ipdb.set_trace()
     post_train_hooks(cfg, trainer)
 
     LOG.info(f"Training Completed!!! Saving pre-trained model to {cfg.output_dir}")
 
+    save_structured_weights(trainer.model, save_path="/mnt/zyk/Medusa/axolotl/weight/model_weights.pt")
     # post training
     for name, module in model.named_modules():
         if hasattr(module, "_post_training"):

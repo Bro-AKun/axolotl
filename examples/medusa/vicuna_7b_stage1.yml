@@ -1,5 +1,5 @@
-base_model: lmsys/vicuna-7b-v1.5
-base_model_config: lmsys/vicuna-7b-v1.5
+base_model: /mnt/zyk/Medusa/vicuna-7b-v1.5
+base_model_config: /mnt/zyk/Medusa/vicuna-7b-v1.5
 model_type: LlamaForCausalLM
 tokenizer_type: LlamaTokenizer
 is_llama_derived_model: true
@@ -9,9 +9,9 @@ load_in_4bit: false
 strict: false
 
 datasets:
-  - path: /mnt/task_runtime/sh_workspace/zyk/ShareGPT_V4.3_unfiltered_cleaned_split.json
+  - path: /mnt/zyk/Medusa/ShareGPT_V4.3_unfiltered_cleaned_split.json
     type: sharegpt
-dataset_prepared_path:
+dataset_prepared_path: 
 val_set_size: 0.01
 output_dir: ./vicuna_7b_stage1
 
@@ -27,10 +27,11 @@ wandb_log_model:
 
 gradient_accumulation_steps: 4
 micro_batch_size: 1
-num_epochs: 2
+num_epochs: 10
 optimizer: adamw_bnb_8bit
 lr_scheduler: cosine
-learning_rate: 0.00005
+# learning_rate: 0.002
+learning_rate: 0.0005
 
 train_on_inputs: false
 group_by_length: false
@@ -46,8 +47,9 @@ logging_steps: 1
 xformers_attention:
 flash_attention: false
 
-warmup_steps: 40
-eval_steps: 40
+warmup_steps: 100
+# warmup_steps: 3
+eval_steps: 3
 save_steps:
 save_total_limit: 1
 debug:

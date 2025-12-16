@@ -20,6 +20,79 @@ import types
 import math
 import wandb
 import transformers
+import ipdb
+from torch.nn import RMSNorm
+
+def create_original_from_labels_and_embedded(labels, embedded, vocab_size=32000):
+    """
+    根据labels和embedded张量生成original张量
+    
+    Args:
+        labels: 形状为[4096]的标签张量，包含-100作为无效标记
+        embedded: 形状为[1, 4096, 32000]的嵌入张量
+        vocab_size: 词汇表大小，默认32000
+    
+    Returns:
+        original: 形状为[1, 4096, 32000]的张量
+    """
+    
+    # 验证输入形状
+    assert labels.dim() == 1, f"labels应为1维，实际为{labels.dim()}维"
+    assert labels.shape[0] == 4096, f"labels长度应为4096，实际为{labels.shape[0]}"
+    assert embedded.dim() == 3, f"embedded应为3维，实际为{embedded.dim()}维"
+    assert embedded.shape == (1, 4096, vocab_size), f"embedded形状应为(1, 4096, {vocab_size})，实际为{embedded.shape}"
+    
+    # print("🎯 开始生成original张量")
+    # print("=" * 40)
+    
+    # 统计有效和无效标签
+    valid_mask = labels != -100
+    invalid_mask = labels == -100
+    
+    valid_count = valid_mask.sum().item()
+    invalid_count = invalid_mask.sum().item()
+    
+    # print(f"📊 标签统计:")
+    # print(f"  有效标签: {valid_count}个")
+    # print(f"  无效标签(-100): {invalid_count}个")
+    # print(f"  有效比例: {valid_count/4096:.1%}")
+    
+    def method_one_hot(labels, embedded, valid_mask, vocab_size):
+        """使用F.one_hot实现"""
+        
+        # 创建全零张量作为基础
+        batch_size, seq_len, hidden_size = embedded.shape
+        original = torch.zeros_like(embedded)
+        
+        # 处理有效标签：转换为one-hot
+        if valid_count > 0:
+            valid_labels = labels[valid_mask]
+            # 使用F.one_hot创建one-hot编码
+            one_hot_encoded = F.one_hot(valid_labels, num_classes=vocab_size).float()
+            one_hot_encoded = one_hot_encoded.half()
+            # 将one-hot编码放到对应位置
+            original[0, valid_mask] = one_hot_encoded
+            # print(f"  ✅ 生成{valid_count}个one-hot编码")
+        
+        # 处理无效标签：使用embedded的值
+        if invalid_count > 0:
+            # original[0, invalid_mask] = embedded[0, invalid_mask]
+            # # print(f"  ✅ 保留{invalid_count}个embedded值")
+            invalid_embedded = embedded[0, ~valid_mask]  # 形状: [invalid_count, vocab_size]
+        
+            # 方法1: 取最大值的位置作为one-hot索引
+            invalid_indices = torch.argmax(invalid_embedded, dim=-1)  # 形状: [invalid_count]
+            
+            # 转换为one-hot编码
+            invalid_one_hot = F.one_hot(invalid_indices, num_classes=vocab_size).float()
+            invalid_one_hot = invalid_one_hot.to(embedded.dtype)
+            
+            # 放入对应位置
+            original[0, ~valid_mask] = invalid_one_hot
+        
+        return original
+    original = method_one_hot(labels, embedded, valid_mask, vocab_size)
+    return original
 
 logger = LOG = logging.getLogger("axolotl.monkeypatch.medusa")
 
@@ -113,7 +186,8 @@ class Rotator:
         return torch.cat((-v, u), dim=-1)
 
 def avg_pooling(x):
-    return torch.mean(x, dim=1, keepdim=True)
+    return torch.sum(x, dim=1, keepdim=True)
+    # return torch.mean(x, dim=1, keepdim=True)
 
 class CrossAttention(nn.Module):
     def __init__(self, embed_dim, num_heads, vocab_dim ,lm_head_layer,dropout=0.1):
@@ -126,14 +200,14 @@ class CrossAttention(nn.Module):
         self.query = nn.Linear(vocab_dim, embed_dim)
         self.key = nn.Linear(embed_dim, embed_dim)
         self.value = nn.Linear(embed_dim, embed_dim)
-        
+
         # 输出层
         self.proj = nn.Linear(embed_dim, vocab_dim)
         
-        # 复制 lm_head 的权重和偏置（如果存在）
-        self.proj.weight.data.copy_(lm_head_layer.weight.data)
-        if hasattr(lm_head_layer, 'bias') and lm_head_layer.bias is not None:
-            self.proj.bias.data.copy_(lm_head_layer.bias.data)
+        # # 复制 lm_head 的权重和偏置（如果存在）
+        # self.proj.weight.data.copy_(lm_head_layer.weight.data)
+        # if hasattr(lm_head_layer, 'bias') and lm_head_layer.bias is not None:
+        #     self.proj.bias.data.copy_(lm_head_layer.bias.data)
 
         self.dropout = nn.Dropout(dropout)
         
@@ -155,12 +229,19 @@ class CrossAttention(nn.Module):
         batch_size = x.size(0)
         
         # 1. 线性投影并分头
-        q = self.query(x).view(batch_size, -1, self.num_heads, self.head_dim).transpose(1, 2)  # [B, H, L_q, D/H]
-        k = self.key(context).view(batch_size, -1, self.num_heads, self.head_dim).transpose(1, 2)  # [B, H, L_kv, D/H]
-        v = self.value(context).view(batch_size, -1, self.num_heads, self.head_dim).transpose(1, 2)  # [B, H, L_kv, D/H]
+        q = self.query(x).view(batch_size, -1, self.num_heads, self.head_dim).transpose(1, 2)  # [B, H, L_q, D/H]  [4096,1,4,1024]-->[4096,4,1,1024]
+        k = self.key(context).view(batch_size, -1, self.num_heads, self.head_dim).transpose(1, 2)  # [B, H, L_kv, D/H]  -->[4096,4,10,1024]
+        v = self.value(context).view(batch_size, -1, self.num_heads, self.head_dim).transpose(1, 2)  # [B, H, L_kv, D/H]  -->[4096,4,10,1024]
         
+        if torch.isnan(q).any():
+            print("❌ Query 包含NaN!")
+        if torch.isnan(k).any():
+            print("❌ Key 包含NaN!")
+        if torch.isnan(v).any():
+            print("❌ Value 包含NaN!")
+
         # 2. 计算注意力分数
-        attn_scores = torch.matmul(q, k.transpose(-2, -1)) * self.scale  # [B, H, L_q, L_kv]
+        attn_scores = torch.matmul(q, k.transpose(-2, -1)) * self.scale  # [B, H, L_q, L_kv]  [4096,4,1,10]
         
         # # 3. 应用掩码（可选）
         # if mask is not None:
@@ -169,13 +250,13 @@ class CrossAttention(nn.Module):
         # 4. 注意力权重和输出
         attn_weights = F.softmax(attn_scores, dim=-1)
         attn_weights = self.dropout(attn_weights)
-        out = torch.matmul(attn_weights, v)  # [B, H, L_q, D/H]
+        out = torch.matmul(attn_weights, v)  # [B, H, L_q, D/H] [4096,4,1,1024]
         
         # 5. 合并多头并投影
-        out = out.transpose(1, 2).contiguous().view(batch_size, -1, self.embed_dim)
+        out = out.transpose(1, 2).contiguous().view(batch_size, -1, self.embed_dim)  #[4096,1,4096]
         out = self.proj(out)
         
-        return out
+        return out #[4096,1,32000]
 
 # def POS_embedding(current_vec: torch.Tensor, 
 #                  past_vec: torch.Tensor, 
@@ -213,6 +294,7 @@ def add_medusa_heads(
     self.cross_attn = nn.ModuleList(
     [CrossAttention(hidden_size,4,vocab_size,self.lm_head) for _ in range(medusa_num_heads)]
     )
+    self.rmsnorm = RMSNorm(normalized_shape=32000,eps=1e-6)
     # self.proj_layers = nn.ModuleList([
     #         nn.Linear(vocab_size,hidden_size, bias=False)
     #         for _ in range(medusa_num_heads)
@@ -297,10 +379,10 @@ def add_medusa_heads(
                 # print("Number of layers:", len(all_layer_outputs))  # 打印层数
                 # for i, layer_output in enumerate(all_layer_outputs):
                 #     print(f"Layer {i} output shape:", layer_output.shape)
-            x = 10  
+            x = 5  # 取最后x层  
             x_layers = all_layer_outputs[-x:]  # 列表，包含x个 [1, 4096, 4096] 张量
             last_x_layers = torch.cat(x_layers, dim=0).transpose(0, 1)
-            # print("last_x_layers shape:", last_x_layers.shape)  # 应输出 torch.Size([4096,x, 4096])
+            # print("last_x_layers shape:", last_x_layers.shape)  # 应输出 torch.Size([4096,x, 4096]) [4096, 10, 4096]
             # last_token_hidden_states = [layer[:, -1, :] for layer in last_x_layers]  # x个 [1, 4096] 张量
             # merged_output = torch.stack(last_token_hidden_states, dim=1)  # [1, x, 4096]
 
@@ -318,22 +400,45 @@ def add_medusa_heads(
                 output_hidden_states=output_hidden_states,
                 return_dict=return_dict,
             )
-            hidden_states = outputs[0]
+            hidden_states = outputs[0]  #[1, 4096, 4096]
             medusa_logits = [self.lm_head(hidden_states)]
         # for i in range(self.medusa_num_heads):
         #     medusa_logits.append(self.medusa_head[i](hidden_states))
-        embedded = out_0.transpose(0,1)
-        embedded_cat = embedded
+        if labels ==None:
+            embedded = out_0.transpose(0,1).clone() #[4096,1,32000]            
+            embedded = F.softmax(embedded, dim=-1)
+            embedded_cat = embedded.clone()
+            original = out_0.transpose(0,1).clone()
+            original = F.softmax(original, dim=-1)
+        else:
+            # print("使用labels生成embedded和original")
+            labels = labels.view(-1)
+            labels[:-1] = labels[1 :].clone()
+            labels[-1] = -100
+            embedded = create_original_from_labels_and_embedded(labels, out_0)
+            embedded = embedded.transpose(0,1)  #[4096,1,32000]
+            embedded_cat = embedded.clone()
+            original = embedded.clone()
+        # ipdb.set_trace()
+        current_shift = torch.zeros_like(original)
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         for i in range(self.medusa_num_heads):
-            SiLued = self.medusa_head[i](last_x_layers)
-            predicted = self.cross_attn[i](embedded, SiLued)
+            SiLued = self.medusa_head[i](last_x_layers)     #[4096, 10, 4096]
+            predicted = self.cross_attn[i](embedded, SiLued) #[4096, 1, 32000]
             # print("predicted shape:", predicted.shape) #应该输出[1,seq_len,Voacb_size]
+            rms_norm = self.rmsnorm.to(device)  # 在最后一个维度(32000)上归一化
+            predicted = rms_norm(predicted)
             medusa_logits.append(predicted)
-            embedded_cat = torch.cat((embedded_cat, predicted), dim=1)
-            embedded_pos = Rotator(embedded_cat.shape[-1], torch.arange(i+2)).rotate(embedded_cat)
+            current_shift[:-i-1, :, :] = original[i+1:, :, :]
+            current_shift[-i-1:, :, :] = 0            
+            embedded_cat = torch.cat((embedded_cat, current_shift), dim=1)
+            # embedded_pos = Rotator(embedded_cat.shape[-1], torch.arange(i+2)).rotate(embedded_cat)  #[4096,head_th, 32000]
             # print("embedded_pos shape:", embedded_pos.shape) #应该输出[seq_len,num_head,32000]
-            embedded = avg_pooling(embedded_pos)
+            # embedded = avg_pooling(embedded_pos)#[4096,1,32000]
+            embedded = avg_pooling(embedded_cat)
+            # print("embedded:",embedded[i+200,0,0:200])
         # print("medusa_logits shape:",torch.stack(medusa_logits, dim=0).transpose(1,2).shape)#应该输出[6,1,seq_len,Vocab_size]
+        # ipdb.set_trace()
         return torch.stack(medusa_logits, dim=0).transpose(1,2)
     
         # print("medusa_logits shape:", torch.stack(medusa_logits, dim=0).shape)#应该输出[medusa_num_heads+1,1,seq_len,Vocab_size]
@@ -357,7 +462,7 @@ def replace_compute_loss(
     medusa_distillation_regularization=0.0,
     medusa_self_distillation=False,
 ):
-    def compute_loss(self, model, inputs, return_outputs=False):
+    def compute_loss(self, model, inputs,tokenizer, return_outputs=False):
         """
         Compute the training loss for the model.
 
@@ -385,22 +490,25 @@ def replace_compute_loss(
                 for module in model.modules():
                     if isinstance(module, (BaseTunerLayer)):
                         module.enable_adapters(True)
-
+        labels = inputs["labels"]
         logits = model(
             **inputs,
             medusa_return=True,
             medusa_only_heads=medusa_only_heads,
-        )
-        labels = inputs["labels"]
+        )        
         # Shift so that tokens < n predict n
         loss = 0
         loss_fct = CrossEntropyLoss()
         log = {}
         medusa = logits.shape[0]
+        # text_1 = labels[..., :].contiguous().view(-1)
+
         for i in range(medusa):
             medusa_logits = logits[i, :, : -(1 + i)].contiguous()
             medusa_labels = labels[..., 1 + i :].contiguous()
             medusa_logits = medusa_logits.view(-1, logits.shape[-1])
+            if torch.isnan(medusa_logits).any():
+                print("❌ medusa_logits 包含NaN!")
             medusa_labels = medusa_labels.view(-1)
             medusa_labels = medusa_labels.to(medusa_logits.device)
             if i == 0:
@@ -457,8 +565,38 @@ def replace_compute_loss(
                     loss += loss_i
             else:
                 loss += loss_i * medusa_decay_coefficient ** i * medusa_heads_coefficient * medusa_scheduler_coefficient
-            not_ignore = medusa_labels.ne(IGNORE_TOKEN_ID)
+            print(f"medusa_head {i} loss:",loss_i.item())
+            not_ignore = medusa_labels.ne(IGNORE_TOKEN_ID)#IGNORE_TOKEN_ID=-100
             medusa_labels = medusa_labels[not_ignore]
+            text = tokenizer.decode(
+                medusa_labels.tolist(),
+                skip_special_tokens=True,
+                spaces_between_special_tokens=False,
+                clean_up_tokenization_spaces=True,
+            )
+            
+            if i==0:
+                print("labels",text[0:100])
+
+            # not_ignore_shifted = torch.zeros_like(not_ignore)
+            # not_ignore_shifted[:-i-1] = not_ignore[i+1:]
+            # not_ignore_shifted[-i-1:] = 0  #左移  
+            topk1_value, topk1 = medusa_logits.topk(1, dim=-1)
+            topk1 = topk1.view(-1)
+            print(f"medusa_head {i}_logits:",topk1_value.view(-1))
+            # ipdb.set_trace()
+            topk1 = topk1[not_ignore]
+            
+            # ipdb.set_trace()
+            text = tokenizer.decode(
+                    topk1.tolist(),
+                    skip_special_tokens=True,
+                    spaces_between_special_tokens=False,
+                    clean_up_tokenization_spaces=True,
+                )
+            # ipdb.set_trace()
+            print(f"medusa_head {i} :", text[0:100])
+            # print(f"medusa_head {i}_id :", topk1)
 
             # Add top-k accuracy
             for k in range(1, 10):
@@ -471,6 +609,8 @@ def replace_compute_loss(
             log["medusa_scheduler_coefficient"] = medusa_scheduler_coefficient
         # self.log(log)
         # Add prefix to the log
+        # ipdb.set_trace()
+
         if model.training:
             prefix = "train"
         else:
@@ -500,7 +640,6 @@ def replace_create_optimizer(
         opt_model = self.model_wrapped if is_sagemaker_mp_enabled() else self.model
 
         if self.optimizer is None:
-            # print("啊毒品哈代得到大家")
             decay_parameters = self.get_decay_parameter_names(opt_model)
             # print("decay_parameters:", decay_parameters)
             print("\n===== 模型参数列表 =====")
@@ -514,7 +653,7 @@ def replace_create_optimizer(
                         p for n, p in opt_model.named_parameters()
                         if (p.requires_grad
                             and n in decay_parameters
-                            and not any(k in n for k in ["medusa_head", "cross_attn"]))
+                            and not any(k in n for k in ["medusa_head", "cross_attn","rmsnorm"]))
                     ],
                     "weight_decay": self.args.weight_decay,
                 },
@@ -523,7 +662,7 @@ def replace_create_optimizer(
                     "params": [
                         p for n, p in opt_model.named_parameters()
                         if (p.requires_grad
-                            and any(k in n for k in ["medusa_head", "cross_attn"]))
+                            and any(k in n for k in ["medusa_head", "cross_attn","rmsnorm"]))
                     ],
                     "weight_decay": self.args.weight_decay,
                     "lr": self.args.learning_rate * medusa_lr_multiplier,
@@ -534,7 +673,7 @@ def replace_create_optimizer(
                         p for n, p in opt_model.named_parameters()
                         if (p.requires_grad
                             and n not in decay_parameters
-                            and not any(k in n for k in ["medusa_head", "cross_attn"]))
+                            and not any(k in n for k in ["medusa_head", "cross_attn","rmsnorm"]))
                     ],
                     "weight_decay": 0.0,
                 }
@@ -543,8 +682,8 @@ def replace_create_optimizer(
             print("\n===== 修正后的优化器参数分配检查 =====")
             total_params = set()
             for i, group in enumerate(optimizer_grouped_parameters):
-                print(f"参数组 {i}: LR={group.get('lr', 'default')}, WD={group['weight_decay']}")
-                print(f"  参数数量: {len(group['params'])}")
+                # print(f"参数组 {i}: LR={group.get('lr', 'default')}, WD={group['weight_decay']}")
+                # print(f"  参数数量: {len(group['params'])}")
                 
                 # 打印前3个参数示例
                 for p in group["params"][:]:
@@ -570,8 +709,8 @@ def replace_create_optimizer(
                #  else:
                #      print(f"\n⚠️ 总参数数量不足40，当前只有 {len(all_params_list)} 个参数")
 
-            print(f"\n总可训练参数: {len(total_params)}")
-            print(f"总模型参数: {sum(p.requires_grad for p in opt_model.parameters())}")
+            # print(f"\n总可训练参数: {len(total_params)}")
+            # print(f"总模型参数: {sum(p.requires_grad for p in opt_model.parameters())}")
             
             # # 检查是否所有参数都被分配
             # if len(total_params) != sum(p.requires_grad for p in opt_model.parameters()):

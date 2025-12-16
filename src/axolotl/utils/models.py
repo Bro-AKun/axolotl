@@ -3,7 +3,7 @@ import logging
 import math
 import os
 from typing import Optional, Tuple  # noqa: F401
-
+import ipdb
 import bitsandbytes as bnb
 import torch
 import transformers
@@ -40,6 +40,9 @@ def load_model_config(cfg):
     return AutoConfig.from_pretrained(
         model_config_name, trust_remote_code=trust_remote_code
     )
+    # return AutoModelForCausalLM.from_pretrained(
+    # model_config_name, trust_remote_code=trust_remote_code
+    # )
 
 
 def load_tokenizer(cfg):
@@ -63,6 +66,7 @@ def load_tokenizer(cfg):
         use_fast=use_fast,
         **tokenizer_kwargs,
     )
+    # ipdb.set_trace()
 
     if (
         tokenizer.__class__.__name__
@@ -594,7 +598,7 @@ def load_model(
         # for param in model.medusa_head.parameters():
         #     param.requires_grad = True
 
-        for module in [model.medusa_head, model.cross_attn]:
+        for module in [model.medusa_head, model.cross_attn , model.rmsnorm]:
             for param in module.parameters():
                 param.requires_grad = True
 
