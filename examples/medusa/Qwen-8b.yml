@@ -1,0 +1,78 @@
+base_model: /mnt/zyk/Medusa/Qwen3-8B/Qwen/Qwen3-8B
+base_model_config: /mnt/zyk/Medusa/Qwen3-8B/Qwen/Qwen3-8B
+model_type: AutoModelForCausalLM
+tokenizer_type: AutoTokenizer
+is_llama_derived_model: false
+
+load_in_8bit: false
+load_in_4bit: false
+strict: false
+
+datasets:
+  - path: /mnt/zyk/Medusa/ShareGPT_V4.3_unfiltered_cleaned_split.json
+    type: sharegpt
+dataset_prepared_path: 
+val_set_size: 0.01
+output_dir: ./Qwen_8b_stage1
+
+sequence_len: 4096
+sample_packing: true
+pad_to_sequence_len: true
+
+wandb_project: medusa_test
+wandb_entity:
+wandb_watch:
+wandb_run_id:
+wandb_log_model:
+
+gradient_accumulation_steps: 4
+micro_batch_size: 1
+num_epochs: 200
+optimizer: adamw_bnb_8bit
+lr_scheduler: cosine
+# learning_rate: 0.002
+learning_rate: 0.0005
+
+train_on_inputs: false
+group_by_length: false
+bf16: true
+# fp16: true
+tf32: false
+fp16: false
+
+gradient_checkpointing: true
+early_stopping_patience:
+resume_from_checkpoint:
+local_rank:
+logging_steps: 1
+xformers_attention:
+flash_attention: false
+
+warmup_steps: 40
+# warmup_steps: 3
+eval_steps: 
+save_steps:
+save_total_limit: 1
+debug:
+deepspeed:
+weight_decay: 0.0
+fsdp:
+fsdp_config:
+special_tokens:
+  bos_token: "<s>"
+  eos_token: "</s>"
+  unk_token: "<unk>"
+
+medusa_num_heads: 1
+medusa_num_layers: 1
+medusa_heads_coefficient: 0.2
+medusa_decay_coefficient: 0.8
+medusa_logging: true
+medusa_scheduler: constant
+medusa_lr_multiplier: 4.0
+medusa_only_heads: true
+ddp_find_unused_parameters: true
+# Stage 1: only train the medusa heads
+# Stage 2: train the whole model
+# learning_rate: 0.0005
+# - path: /mnt/task_runtime/zyk/ShareGPT_V4.3_unfiltered_cleaned_split.json

@@ -13,7 +13,7 @@ import torch
 import torch.distributed as dist
 import wandb
 from datasets import load_dataset
-from optimum.bettertransformer import BetterTransformer
+# from optimum.bettertransformer import BetterTransformer
 from tqdm import tqdm
 from transformers import (
     GenerationConfig,
@@ -24,7 +24,7 @@ from transformers import (
     TrainingArguments,
 )
 from transformers.trainer_utils import PREFIX_CHECKPOINT_DIR, IntervalStrategy
-
+from transformers import AutoModelForCausalLM
 from axolotl.utils.bench import log_gpu_memory_usage
 from axolotl.utils.distributed import (
     barrier,
@@ -58,7 +58,7 @@ class EvalFirstStepCallback(
         **kwargs,
     ):
         if (
-            args.evaluation_strategy == IntervalStrategy.STEPS
+            args.eval_strategy == IntervalStrategy.STEPS
             and args.eval_steps < 1.0
             and state.global_step == 1
         ):
@@ -92,7 +92,12 @@ class SaveBetterTransformerModelCallback(
                 f"{PREFIX_CHECKPOINT_DIR}-{state.global_step}",
             )
 
-            model = BetterTransformer.reverse(kwargs["model"])
+            # model = BetterTransformer.reverse(kwargs["model"])
+            model = AutoModelForCausalLM.from_pretrained(
+                "/mnt/zyk/Medusa/Qwen3-8B/Qwen/Qwen3-8B",
+                torch_dtype="auto",
+                device_map="auto"
+            )
             model.save_pretrained(checkpoint_folder)
             # FIXME - need to cleanup old checkpoints
 

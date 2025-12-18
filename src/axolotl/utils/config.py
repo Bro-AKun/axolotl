@@ -357,17 +357,17 @@ def validate_config(cfg):
         )
 
     if (
-        cfg.evaluation_strategy
+        cfg.eval_strategy
         and cfg.eval_steps
-        and cfg.evaluation_strategy != "steps"
+        and cfg.eval_strategy != "steps"
     ):
         raise ValueError(
-            "evaluation_strategy and eval_steps mismatch. Please set evaluation_strategy to 'steps' or remove eval_steps."
+            "eval_strategy and eval_steps mismatch. Please set eval_strategy to 'steps' or remove eval_steps."
         )
 
-    if cfg.val_set_size == 0 and (cfg.eval_steps or cfg.evaluation_strategy):
+    if cfg.val_set_size == 0 and (cfg.eval_steps or cfg.eval_strategy):
         raise ValueError(
-            "eval_steps and evaluation_strategy are not supported with val_set_size == 0"
+            "eval_steps and eval_strategy are not supported with val_set_size == 0"
         )
 
     if (

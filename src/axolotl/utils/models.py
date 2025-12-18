@@ -7,7 +7,7 @@ import ipdb
 import bitsandbytes as bnb
 import torch
 import transformers
-from optimum.bettertransformer import BetterTransformer
+# from optimum.bettertransformer import BetterTransformer
 from peft import PeftConfig, prepare_model_for_kbit_training
 from peft.tuners.lora import QuantLinear
 from transformers import (  # noqa: F401
@@ -59,13 +59,14 @@ def load_tokenizer(cfg):
     if cfg.tokenizer_type:
         tokenizer_cls = getattr(transformers, cfg.tokenizer_type)
 
-    tokenizer_config = cfg.tokenizer_config or cfg.base_model_config
-    tokenizer = tokenizer_cls.from_pretrained(
-        tokenizer_config,
-        trust_remote_code=cfg.trust_remote_code or False,
-        use_fast=use_fast,
-        **tokenizer_kwargs,
-    )
+    # tokenizer_config = cfg.tokenizer_config or cfg.base_model_config
+    # tokenizer = tokenizer_cls.from_pretrained(
+    #     tokenizer_config,
+    #     trust_remote_code=cfg.trust_remote_code or False,
+    #     use_fast=use_fast,
+    #     **tokenizer_kwargs,
+    # )
+    tokenizer = AutoTokenizer.from_pretrained("/mnt/zyk/Medusa/Qwen3-8B/Qwen/Qwen3-8B")
     # ipdb.set_trace()
 
     if (
@@ -374,7 +375,7 @@ def load_model(
             trust_remote_code=cfg.trust_remote_code or False,
             **model_kwargs,
         )
-
+    model = AutoModelForCausalLM.from_pretrained("/mnt/zyk/Medusa/Qwen3-8B/Qwen/Qwen3-8B",torch_dtype="auto") 
     # Dequantize for qlora
     # Adapt from https://gist.github.com/ChrisHayduk/1a53463331f52dca205e55982baf9930
     if cfg.merge_lora and cfg.adapter == "qlora" and cfg.load_in_4bit:
@@ -536,9 +537,9 @@ def load_model(
     if cfg.medusa_num_heads is not None:
         from transformers import LlamaForCausalLM, MistralForCausalLM
 
-        assert isinstance(
-            model, (LlamaForCausalLM, MistralForCausalLM)
-        ), "Medusa is only supported for Llama and Mistral models for now"
+        # assert isinstance(
+        #     model, (LlamaForCausalLM, MistralForCausalLM)
+        # ), "Medusa is only supported for Llama and Mistral models for now"
 
         LOG.info(
             f"using Medusa with {cfg.medusa_num_heads} heads, {cfg.medusa_num_layers} layers, {cfg.medusa_decay_coefficient} decay coefficient, {cfg.medusa_heads_coefficient} heads coefficient, {cfg.medusa_scheduler} scheduler, {cfg.medusa_logging} logging"
@@ -637,8 +638,8 @@ def load_model(
         LOG.warning("there are no parameters that require gradient updates")
     model.config.use_cache = False
 
-    if cfg.flash_optimum:
-        model = BetterTransformer.transform(model)
+    # if cfg.flash_optimum:
+    #     model = BetterTransformer.transform(model)
 
     if cfg.adapter is not None:
         log_gpu_memory_usage(LOG, "after adapters", model.device)

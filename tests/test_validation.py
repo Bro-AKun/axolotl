@@ -459,31 +459,31 @@ class ValidationTest(unittest.TestCase):
     def test_no_conflict_eval_strategy(self):
         cfg = DictDefault(
             {
-                "evaluation_strategy": "epoch",
+                "eval_strategy": "epoch",
                 "eval_steps": 10,
             }
         )
 
         with pytest.raises(
-            ValueError, match=r".*evaluation_strategy and eval_steps mismatch.*"
+            ValueError, match=r".*eval_strategy and eval_steps mismatch.*"
         ):
             validate_config(cfg)
 
         cfg = DictDefault(
             {
-                "evaluation_strategy": "no",
+                "eval_strategy": "no",
                 "eval_steps": 10,
             }
         )
 
         with pytest.raises(
-            ValueError, match=r".*evaluation_strategy and eval_steps mismatch.*"
+            ValueError, match=r".*eval_strategy and eval_steps mismatch.*"
         ):
             validate_config(cfg)
 
         cfg = DictDefault(
             {
-                "evaluation_strategy": "steps",
+                "eval_strategy": "steps",
             }
         )
 
@@ -491,7 +491,7 @@ class ValidationTest(unittest.TestCase):
 
         cfg = DictDefault(
             {
-                "evaluation_strategy": "steps",
+                "eval_strategy": "steps",
                 "eval_steps": 10,
             }
         )
@@ -508,7 +508,7 @@ class ValidationTest(unittest.TestCase):
 
         cfg = DictDefault(
             {
-                "evaluation_strategy": "no",
+                "eval_strategy": "no",
             }
         )
 
@@ -516,14 +516,14 @@ class ValidationTest(unittest.TestCase):
 
         cfg = DictDefault(
             {
-                "evaluation_strategy": "epoch",
+                "eval_strategy": "epoch",
                 "val_set_size": 0,
             }
         )
 
         with pytest.raises(
             ValueError,
-            match=r".*eval_steps and evaluation_strategy are not supported with val_set_size == 0.*",
+            match=r".*eval_steps and eval_strategy are not supported with val_set_size == 0.*",
         ):
             validate_config(cfg)
 
@@ -536,7 +536,7 @@ class ValidationTest(unittest.TestCase):
 
         with pytest.raises(
             ValueError,
-            match=r".*eval_steps and evaluation_strategy are not supported with val_set_size == 0.*",
+            match=r".*eval_steps and eval_strategy are not supported with val_set_size == 0.*",
         ):
             validate_config(cfg)
 
@@ -559,7 +559,7 @@ class ValidationTest(unittest.TestCase):
 
         cfg = DictDefault(
             {
-                "evaluation_strategy": "epoch",
+                "eval_strategy": "epoch",
                 "val_set_size": 0.01,
             }
         )

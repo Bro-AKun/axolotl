@@ -5,11 +5,12 @@ shared module for cli specific things
 import logging
 from dataclasses import dataclass, field
 from typing import Optional
-
+import torch
 from axolotl.logging_config import configure_logging
 from axolotl.utils.dict import DictDefault
-from axolotl.utils.models import load_model, load_tokenizer
-
+# from axolotl.utils.models import load_model, load_tokenizer
+# from modelscope import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer
 configure_logging()
 LOG = logging.getLogger("axolotl.common.cli")
 
@@ -47,8 +48,14 @@ def load_model_and_tokenizer(
     cli_args: TrainerCliArgs,
 ):
     LOG.info(f"loading tokenizer... {cfg.tokenizer_config or cfg.base_model_config}")
-    tokenizer = load_tokenizer(cfg)
+    # tokenizer = load_tokenizer(cfg)
     LOG.info("loading model and (optionally) peft_config...")
-    model, _ = load_model(cfg, tokenizer, inference=cli_args.inference)
+    # model, _ = load_model(cfg, tokenizer, inference=cli_args.inference)
+    tokenizer = AutoTokenizer.from_pretrained("/mnt/zyk/Medusa/Qwen3-8B/Qwen/Qwen3-8B")
+    model = AutoModelForCausalLM.from_pretrained(
+    "/mnt/zyk/Medusa/Qwen3-8B/Qwen/Qwen3-8B",
+    torch_dtype="auto",
+    device_map="auto"
+    )
 
     return model, tokenizer

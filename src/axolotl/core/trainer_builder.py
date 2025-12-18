@@ -306,12 +306,16 @@ class AxolotlTrainer(Trainer):
     def __init__(self, *args, num_epochs=1, bench_data_collator=None, **kwargs):
         self.num_epochs = num_epochs
         self.bench_data_collator = bench_data_collator
-        tokenizer_cls = getattr(transformers, 'LlamaTokenizer')
+
+        self.tokenizer_1 = AutoTokenizer.from_pretrained("/mnt/zyk/Medusa/Qwen3-8B/Qwen/Qwen3-8B")
+        
+        tokenizer_cls = getattr(transformers, 'AutoTokenizer')
         self.tokenizer = tokenizer_cls.from_pretrained(
-            '/mnt/zyk/Medusa/vicuna-7b-v1.5',
+            '/mnt/zyk/Medusa/Qwen3-8B/Qwen/Qwen3-8B',
             trust_remote_code=None or False,
             use_fast=True,
     )
+        
 
         super().__init__(*args, **kwargs)
 
@@ -445,7 +449,7 @@ class AxolotlTrainer(Trainer):
         #     return (loss, outputs) if return_outputs else loss
         return super().compute_loss(model, inputs,tokenizer,return_outputs=return_outputs)
 
-    def training_step(self, model, inputs) -> torch.Tensor:
+    def training_step(self, model, inputs,*args) -> torch.Tensor:
         """
         Perform a training step on a batch of inputs.
 
@@ -467,19 +471,19 @@ class AxolotlTrainer(Trainer):
         inputs = self._prepare_inputs(inputs)
 
         with self.compute_loss_context_manager():
-            loss = self.compute_loss(model, inputs,self.tokenizer_1)
+            loss = self.compute_loss(model=model, inputs = inputs,tokenizer = self.tokenizer_1)
 
         if self.args.n_gpu > 1:
             loss = loss.mean()  # mean() to average on multi-gpu parallel training
 
-        if self.do_grad_scaling:
-            self.scaler.scale(loss).backward()
-        elif self.use_apex:
-            # with amp.scale_loss(loss, self.optimizer) as scaled_loss:
-            #     scaled_loss.backward()
-            raise NotImplementedError("Apex is no longer supported")
-        else:
-            self.accelerator.backward(loss)
+        # if self.do_grad_scaling:
+        #     self.scaler.scale(loss).backward()
+        # elif self.use_apex:
+        #     # with amp.scale_loss(loss, self.optimizer) as scaled_loss:
+        #     #     scaled_loss.backward()
+        #     raise NotImplementedError("Apex is no longer supported")
+        # else:
+        self.accelerator.backward(loss)
         analyze_gradient_health_fixed(self.model)
         return loss.detach() / self.args.gradient_accumulation_steps
 
@@ -730,18 +734,18 @@ class HFCausalTrainerBuilder(TrainerBuilderBase):
             ] = self.cfg.sample_packing_eff_est
 
         if self.cfg.eval_steps:
-            training_arguments_kwargs["evaluation_strategy"] = "steps"
+            training_arguments_kwargs["eval_strategy"] = "steps"
             training_arguments_kwargs["eval_steps"] = self.cfg.eval_steps
-        elif self.cfg.evaluation_strategy:
+        elif self.cfg.eval_strategy:
             training_arguments_kwargs[
-                "evaluation_strategy"
-            ] = self.cfg.evaluation_strategy
+                "eval_strategy"
+            ] = self.cfg.eval_strategy
         elif self.cfg.val_set_size == 0:
             # no eval set, so don't eval
-            training_arguments_kwargs["evaluation_strategy"] = "no"
+            training_arguments_kwargs["eval_strategy"] = "no"
         else:
             # we have an eval set, but no steps defined, default to use epoch
-            training_arguments_kwargs["evaluation_strategy"] = "epoch"
+            training_arguments_kwargs["eval_strategy"] = "epoch"
 
         if self.cfg.save_steps:
             training_arguments_kwargs["save_strategy"] = "steps"

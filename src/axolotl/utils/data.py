@@ -236,9 +236,10 @@ def load_tokenized_prepared_datasets(
                     streaming=False,
                     split=None,
                 )
-            # ipdb.set_trace()
             # ds = ds['train'].select(range(50))
-            ds = ds['train']
+            ds = ds['train'].select(list(range(50)))
+            # ds = ds['train']
+            # ipdb.set_trace()
             if not ds:
                 raise ValueError("unhandled dataset load")
             # support for using a subset of the data

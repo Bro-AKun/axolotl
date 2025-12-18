@@ -11,8 +11,8 @@ import ipdb
 import torch
 import transformers.modelcard
 from datasets import Dataset
-from optimum.bettertransformer import BetterTransformer
-from transformers.deepspeed import is_deepspeed_zero3_enabled
+# from optimum.bettertransformer import BetterTransformer
+# from transformers.deepspeed import is_deepspeed_zero3_enabled
 
 from axolotl.common.cli import TrainerCliArgs
 from axolotl.logging_config import configure_logging
@@ -20,7 +20,8 @@ from axolotl.monkeypatch import neft_embeddings
 from axolotl.utils.dict import DictDefault
 from axolotl.utils.models import load_model, load_tokenizer
 from axolotl.utils.trainer import setup_trainer
-
+# from modelscope import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 src_dir = os.path.join(project_root, "src")
 sys.path.insert(0, src_dir)
@@ -85,7 +86,12 @@ def train(
     # Load the model and tokenizer
     LOG.info("loading model and (optionally) peft_config...")
     model, peft_config = load_model(cfg, tokenizer, inference=cli_args.inference)
-
+    # tokenizer = AutoTokenizer.from_pretrained("/mnt/zyk/Medusa/Qwen3-8B/Qwen/Qwen3-8B")
+    peft_config = None
+    
+    # from accelerate import init_empty_weights
+    # with init_empty_weights():
+    # model = AutoModelForCausalLM.from_pretrained("/mnt/zyk/Medusa/Qwen3-8B/Qwen/Qwen3-8B",torch_dtype="auto")
     safe_serialization = cfg.save_safetensors is True
 
     if cfg.resume_from_checkpoint is None and cfg.auto_resume_from_checkpoints:
@@ -154,6 +160,7 @@ def train(
         ):
             trainer.train(resume_from_checkpoint=resume_from_checkpoint)
     else:
+        # ipdb.set_trace()
         trainer.train(resume_from_checkpoint=resume_from_checkpoint)
     # ipdb.set_trace()
     post_train_hooks(cfg, trainer)

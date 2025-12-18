@@ -10,7 +10,7 @@ import numpy as np
 import torch
 import torch.cuda
 import torch.distributed as dist
-from datasets import set_caching_enabled
+# from datasets import set_caching_enabled
 from torch.utils.data import DistributedSampler, RandomSampler
 
 from axolotl.core.trainer_builder import HFCausalTrainerBuilder
@@ -104,13 +104,13 @@ def drop_long_seq(sample, sequence_len=2048):
     return len(sample["input_ids"]) <= sequence_len and len(sample["input_ids"]) > 0
 
 
-@contextmanager
-def disable_datasets_caching():
-    try:
-        set_caching_enabled(False)
-        yield
-    finally:
-        set_caching_enabled(True)
+# @contextmanager
+# def disable_datasets_caching():
+#     try:
+#         set_caching_enabled(False)
+#         yield
+#     finally:
+#         set_caching_enabled(True)
 
 
 def process_datasets_for_packing(cfg, train_dataset, eval_dataset, tokenizer):
